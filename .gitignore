@@ -1,0 +1,33 @@
+# Environment variables
+.env*
+!.env.example
+
+# Large files
+*.zip
+*.sql
+*.backup
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+errorlogs/
+
+# main file
+adminer.php
+repo/
+repo
+!plansys/components/repo
+app/config/settings.json
+app/config/configdir.php
