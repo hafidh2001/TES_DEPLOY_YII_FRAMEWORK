@@ -1,0 +1,14 @@
+*3
+$3
+set
+$13
+svc:SendEmail
+$217
+{"name":"SendEmail","commandPath":"application.commands","command":"EmailCommand","action":"actionSend","schedule":"manual","period":"","instanceMode":"single","singleInstanceAction":"wait","status":"ok","lastRun":""}
+*3
+$3
+set
+$14
+svc:ImportData
+$222
+{"name":"ImportData","commandPath":"application.commands","command":"ImportCommand","action":"actionIndex","schedule":"manual","period":"","instanceMode":"parallel","singleInstanceAction":"wait","status":"ok","lastRun":""}

@@ -1,0 +1,1436 @@
+2026/05/12 13:50:21 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:21 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:23 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:23 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:27 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:27 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:28 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:28 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:29 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:29 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:30 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:30 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:31 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:31 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:32 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:32 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:34 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:34 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:50:35 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:50:35 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:51:05 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:51:05 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:51:05 [error] [system.db.CDbCommand] CDbCommand::fetchAll() gagal: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. Statement SQL yang dijalankan: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+        .
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (551)
+in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php (366)
+in /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php (3762)
+2026/05/12 13:51:05 [error] [exception.CDbException] CDbException: CDbCommand gagal menjalankan statementSQL: SQLSTATE[42883]: Undefined function: 7 ERROR:  operator does not exist: character varying = integer
+LINE 27:          AND id_client = 2 AND ppds = 247
+                                             ^
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.. The SQL statement executed was: 
+            SELECT
+                id_logbook,
+                id_client,
+                ppds,
+                nim,
+                inisial_code,
+                semester,
+                stase,
+                pin,
+                staff,
+                action,
+                date_logbook,
+                title,
+                notes,
+                peran,
+                category,
+                ROUND(psikomotor::numeric, 2) AS psikomotor,
+                ROUND(knowledge::numeric, 2) AS knowledge,
+                ROUND(afektif::numeric, 2) AS afektif,
+                ROUND(total::numeric, 2) AS total,
+                uuid
+            
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        
+         AND id_client = :id_client AND ppds = :ppds_name
+            ORDER BY
+                date_logbook
+                DESC
+            LIMIT :limit
+            OFFSET :offset
+         in /var/www/hachi/medlink/plansys/components/models/CDbCommand.php:556
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/models/CDbCommand.php(366): CDbCommand->queryInternal()
+#1 /var/www/hachi/medlink/app/controllers/ApiWebServiceController.php(3762): CDbCommand->queryAll()
+#2 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): ApiWebServiceController->actionGetListRekapPenilaian()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): CController->runAction()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): CController->runActionWithFilters()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#7 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#8 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#9 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#10 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetListRekapPenilaian
+HTTP_REFERER=http://localhost:3000/
+---
+2026/05/12 13:59:06 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index
+---
+2026/05/12 13:59:09 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.MAcademicYear
+---
+2026/05/12 13:59:12 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/12 13:59:15 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.VLogbookSummaryGeneral
+---
+2026/05/12 13:59:18 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.VPpdsScoringFixed
+---
+2026/05/12 14:45:40 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genCtrl/index
+---
+2026/05/13 11:14:11 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genCtrl/index&active=app.ApiWebServiceController
+---
+2026/05/13 14:06:17 [error] [php] include(DevSettingDatabase.php): Failed to open stream: No such file or directory (/var/www/hachi/medlink/plansys/framework/YiiBase.php:433)
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/framework/YiiBase.php(404): include()
+#1 unknown(0): autoload()
+#2 /var/www/hachi/medlink/plansys/components/ui/FormBuilder.php(57): class_exists()
+#3 /var/www/hachi/medlink/plansys/components/ui/FormFields/DropDownList.php(322): load()
+#4 /var/www/hachi/medlink/plansys/framework/web/actions/CInlineAction.php(49): DropDownList->actionProcessExpr()
+#5 /var/www/hachi/medlink/plansys/framework/web/CController.php(326): CInlineAction->runWithParams()
+#6 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): FormfieldController->runAction()
+#7 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): FormfieldController->runActionWithFilters()
+#8 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): FormfieldController->run()
+#9 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#10 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#11 /var/www/hachi/medlink/index.php(33): CWebApplication->run()
+REQUEST_URI=/medlink/index.php?r=formfield/DropDownList.processExpr
+in /var/www/hachi/medlink/plansys/modules/dev/forms/settings/DevSettingDatabaseItem.php (3)
+in /var/www/hachi/medlink/plansys/components/ui/FormBuilder.php (57)
+in /var/www/hachi/medlink/plansys/components/ui/FormFields/DropDownList.php (322)
+2026/05/13 14:44:46 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genCtrl/index&active=app.ApiWebServiceController
+---
+2026/05/14 14:49:24 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/forms/empty
+---
+2026/05/14 14:49:24 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/forms/empty
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.MAcademicYear
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.MAcademicYear
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.VPpdsScoringFixed
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/forms/index
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genModel/index&active=app.VLogbookSummaryGeneral
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/forms/index
+---
+2026/05/15 15:18:58 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=/dev/genModel/newModel
+---
+2026/05/15 15:29:06 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genCtrl/index&active=app.ApiWebServiceController
+---
+2026/05/15 15:29:07 [error] [exception.CHttpException.403] CHttpException in /var/www/hachi/medlink/plansys/modules/dev/DevModule.php:53
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/modules/dev/DevModule.php(81): DevModule->accessControl()
+#1 /var/www/hachi/medlink/plansys/framework/web/CController.php(263): DevModule->beforeControllerAction()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#3 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#4 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#5 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#6 {main}
+REQUEST_URI=/medlink/index.php?r=dev/genCtrl/index
+---
+2026/05/18 10:53:40 [error] [php] chmod(): Operation not permitted (/var/www/hachi/medlink/plansys/components/utility/ServiceManager.php:244)
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/components/utility/ServiceManager.php(199): _open()
+#1 /var/www/hachi/medlink/plansys/components/Controller.php(529): startDaemon()
+#2 /var/www/hachi/medlink/plansys/framework/web/CController.php(324): ApiMobileServiceController->beforeAction()
+#3 /var/www/hachi/medlink/plansys/framework/web/CController.php(290): ApiMobileServiceController->runAction()
+#4 /var/www/hachi/medlink/plansys/framework/web/CController.php(268): ApiMobileServiceController->runActionWithFilters()
+#5 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): ApiMobileServiceController->run()
+#6 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#7 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#8 /var/www/hachi/medlink/index.php(33): CWebApplication->run()
+REQUEST_URI=/medlink/index.php?r=apiMobileService/login
+in /var/www/hachi/medlink/plansys/components/utility/ServiceManager.php (244)
+in /var/www/hachi/medlink/plansys/components/utility/ServiceManager.php (32)
+in /var/www/hachi/medlink/plansys/components/utility/ServiceManager.php (199)
+2026/06/11 20:46:36 [error] [php] Trying to access array offset on value of type null (/var/www/hachi/medlink/plansys/components/WebModule.php:11)
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#1 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#2 /var/www/hachi/medlink/index.php(33): CWebApplication->run()
+REQUEST_URI=/medlink/index.php?r=docs/welcome
+in /var/www/hachi/medlink/plansys/components/WebModule.php (11)
+in /var/www/hachi/medlink/index.php (33)
+2026/06/13 12:59:24 [error] [php] Trying to access array offset on value of type null (/var/www/hachi/medlink/plansys/components/WebModule.php:11)
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#1 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#2 /var/www/hachi/medlink/index.php(33): CWebApplication->run()
+REQUEST_URI=/medlink/index.php?r=docs/welcome
+in /var/www/hachi/medlink/plansys/components/WebModule.php (11)
+in /var/www/hachi/medlink/index.php (33)
+2026/06/16 02:47:37 [error] [exception.CHttpException.404] CHttpException: Sistem tidak bisa menemukan action "index" seperti yang diminta. in /var/www/hachi/medlink/plansys/framework/web/CController.php:501
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/framework/web/CController.php(274): CController->missingAction()
+#1 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#3 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#4 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#5 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/
+---
+2026/06/30 07:29:45 [error] [exception.CHttpException.404] CHttpException: Sistem tidak bisa menemukan action "GetDashboard" seperti yang diminta. in /var/www/hachi/medlink/plansys/framework/web/CController.php:501
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/framework/web/CController.php(274): CController->missingAction()
+#1 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#3 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#4 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#5 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService/GetDashboard
+HTTP_REFERER=https://www.google.com/
+---
+2026/06/30 14:41:00 [error] [exception.CHttpException.404] CHttpException: Sistem tidak bisa menemukan action "index" seperti yang diminta. in /var/www/hachi/medlink/plansys/framework/web/CController.php:501
+Stack trace:
+#0 /var/www/hachi/medlink/plansys/framework/web/CController.php(274): CController->missingAction()
+#1 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(288): CController->run()
+#2 /var/www/hachi/medlink/plansys/framework/web/CWebApplication.php(141): CWebApplication->runController()
+#3 /var/www/hachi/medlink/plansys/framework/base/CApplication.php(185): CWebApplication->processRequest()
+#4 /var/www/hachi/medlink/index.php(33): CApplication->run()
+#5 {main}
+REQUEST_URI=/medlink/index.php?r=apiWebService
+HTTP_REFERER=https://www.google.com/
+---

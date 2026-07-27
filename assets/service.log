@@ -1,0 +1,4 @@
+2026/05/18 10:53:40 Running Thrift Server at: 127.0.0.1:43177
+2026/05/18 10:53:40 Running Websocket Server at: 0.0.0.0:34079
+2026/05/18 10:53:40 Failed to listen  0.0.0.0:34079
+2026/05/18 10:53:40 open /var/www/hachi/medlink/app/config/cert.pem: no such file or directory

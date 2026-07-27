@@ -1,0 +1,45 @@
+{
+    "db": {
+        "driver": "pgsql",
+        "host": "localhost",
+        "port": "5433",
+        "username": "dev_kelava",
+        "password": "kelava2021!@#",
+        "dbname": "medic_link_04",
+        "items": [
+            {
+                "conn": "Prasi",
+                "driver": "pgsql",
+                "host": "prasi.avolut.com",
+                "port": "5688",
+                "username": "postgres",
+                "password": "vPn7fieiYySLKPFuwoZ4jwmbv4RyXw31zxJk89pNfdJA6ma8rRJS0933Krl3xiuP",
+                "dbname": "medic_link",
+                "items": ""
+            }
+        ]
+    },
+    "repo": {
+        "path": "repo"
+    },
+    "app": {
+        "dir": "app",
+        "dateFormat": "d M Y",
+        "timeFormat": "H:i",
+        "dateTimeFormat": "d M Y - H:i",
+        "mode": "dev",
+        "debug": "ON",
+        "oAuthGoogle": "OFF",
+        "host": "https:\/\/dev.kelava.id",
+        "url": "https:\/\/hachi.kelava.id\/medlink",
+        "phpPath": "\/usr\/bin\/php8.1"
+    },
+    "email": {
+        "transport": {
+            "service": "none"
+        }
+    },
+    "ldap": {
+        "enable": false
+    }
+}
