@@ -58,9 +58,6 @@ $components = array(
             'httpOnly' => true,
         ),
     ),
-    'loid' => array(
-		'class' => 'application.extensions.lightopenid.loid',
-	),
 );
 
 $dbLists    = Setting::getDBList();
@@ -79,28 +76,6 @@ if (Setting::get('app.debug') == "ON" && Setting::$mode != 'install') {
     );
 }
 
-if (Setting::get('app.oAuthGoogle') == "ON"){
-    if(!isset($components['eauth'])){
-        $components['eauth'] = array(
-    		'class' => 'application.extensions.eauth.EAuth',
-    		'popup' => true, 
-    		'cache' => false, 
-    		'cacheExpire' => 0, 
-    		'services' => array(),
-    		    
-    	);    
-    }
-    
-		 
-	$components['eauth']['services']['google_oauth'] = 
-	array(
-	    'class' => 'GoogleOAuthService',
-		'client_id' => Setting::get('app.oAuthGoogleId'),
-		'client_secret' => Setting::get('app.oAuthGoogleSecret'),
-		'title' => 'Sign in with Google',
-	    
-	 );
-}
 
 
 $imports = array(
@@ -128,11 +103,6 @@ $imports = array(
     'application.components.HttpRequest',
     'app.components.*',
     'app.components.utility.*',
-    'application.extensions.eoauth.*',
-	'application.extensions.eoauth.lib.*',
-	'application.extensions.lightopenid.*',
-	'application.extensions.eauth.*',
-	'application.extensions.eauth.services.*',
 );
 
 foreach ($dbLists as $db => $val) {

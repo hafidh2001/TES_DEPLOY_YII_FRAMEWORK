@@ -1679,6 +1679,35 @@ class ActiveRecord extends CActiveRecord
     {
         $pk = $this->tableSchema->primaryKey;
 
+        ## setelah save sukses, tandai repo file yang sekarang direferensikan
+        ## oleh attribute model (token 64 hex yang terdaftar di p_repo) sebagai
+        ## committed, agar tidak ikut di-sweep oleh cleanRepo (file temp).
+        ## Jangan dipakai untuk record Repo itu sendiri (hashed miliknya sendiri).
+        if (class_exists('Repo') && !($this instanceof Repo)) {
+            foreach ($this->attributes as $attr => $val) {
+                if (is_string($val) && $val != '' && $val != 'null' &&
+                        preg_match('~^[0-9a-f]{64}$~i', $val)) {
+                    $repo = Repo::findByHashed($val);
+                    if ($repo && $repo->status != Repo::STATUS_COMMITTED) {
+                        $repo->markCommitted();
+                    }
+                }
+            }
+        }
+
+        ## setelah save sukses, hapus file repo yang referensinya sudah
+        ## dilepas tombol delete pada UploadFile (dikirim via __repoDeleted[])
+        if (isset($_POST['__repoDeleted']) && is_array($_POST['__repoDeleted']) && class_exists('Repo')) {
+            foreach ($_POST['__repoDeleted'] as $h) {
+                if (is_string($h) && $h != '') {
+                    $repo = Repo::findByHashed($h);
+                    if ($repo) {
+                        $repo->deleteFile();
+                    }
+                }
+            }
+        }
+
         if (!$this->isNewRecord) {
             $this->deleteResetedRelations();
         }

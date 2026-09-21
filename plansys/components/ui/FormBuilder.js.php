@@ -97,6 +97,10 @@ ob_start();
             }
         }
 
+        if (!$scope.pageInfo.pathinfo) {
+            $scope.pageInfo.pathinfo = ($scope.formClassPath || window.location.href);
+        }
+
         // initialize pageSetting
         $timeout(function () {
             var $storage = $localStorage;

@@ -260,58 +260,62 @@ class UploadFile extends FormField {
         }
         $file = $_FILES["file"];
         $name = $file['name'];
-        
+
         $fb = FormBuilder::load($_GET['class']);
+        if (!$fb) {
+            echo json_encode(["success" => "No", "message" => "Konfigurasi form tidak ditemukan"]);
+            die();
+        }
         $ff = $fb->findField(['name' => $_GET['name']]);
-        $up = Yii::getPathOfAlias('webroot') . '/'. $ff['uploadPath'];
-        $path = $ff['uploadPath'];
-    
-        ## create temporary directory
-        $tmpdir = Yii::getPathOfAlias('webroot.assets.tmp');
-        if (!is_dir($tmpdir)) {
-            mkdir($tmpdir, 0755, true);
-            chmod($tmpdir, 0755);
+
+        // cek ekstensi sesuai konfigurasi field (fileType)
+        $fileType = trim(@$ff['fileType']);
+        if ($fileType != '') {
+            $allowed = array_map('trim', explode(',', $fileType));
+            $ext     = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowed, true)) {
+                echo json_encode([
+                    'success' => 'No',
+                    'message' => 'Tipe file tidak diijinkan, File yang diijinkan adalah ' . $fileType,
+                ]);
+                die();
+            }
         }
 
-        ## make sure there is no duplicate file name
-        $i = 1;
-        $actualName = pathinfo($name, PATHINFO_FILENAME);
-        $originName = $actualName;
-        $extension = pathinfo($name, PATHINFO_EXTENSION);
-        while (file_exists($path . DIRECTORY_SEPARATOR . $actualName . '.' . $extension)) {
-            $actualName = (string) $originName . '_' . $i;
-            $name = $actualName . '.' . $extension;
-            $i++;
+        // pengaman: tolak file yang memuat kode / ekstensi berbahaya
+        $unsafe = Repo::unsafeUploadReason($name, $file['tmp_name']);
+        if ($unsafe != '') {
+            echo json_encode(['success' => 'No', 'message' => $unsafe]);
+            die();
         }
 
-        $tmppath = $tmpdir . DIRECTORY_SEPARATOR . $name;
-        $tmppath = str_replace(['/',''],'/',$tmppath);
-        $up = $up . DIRECTORY_SEPARATOR . $name;
-        $path = $path . DIRECTORY_SEPARATOR . $name;
+        // batas ukuran (KB), sesuai konfigurasi field (restrict)
+        if (isset($ff['restrict']) && $ff['restrict'] != '') {
+            if (filesize($file['tmp_name']) > (int) $ff['restrict'] * 1024) {
+                echo json_encode(['success' => 'too-large']);
+                die();
+            }
+        }
 
-		$tmpsuccess = false;
-		if($ff['restrict']!=''){
-			if(filesize($file["tmp_name"])>(int)$ff['restrict']*1024){
-				echo json_encode([
-					'success' => 'too-large',
-				]);
-			} else {
-				$tmpsuccess = true;
-			}
-		} else {
-			$tmpsuccess = true;
-		}
-		if($tmpsuccess){
-			if(move_uploaded_file($file["tmp_name"], $up)){
-				echo json_encode([
-					'success' => 'Yes',
-					'path' => $path,
-					'downloadPath' => base64_encode($path),
-					'name' => $name
-				]);
-			}
-		}
-        
+        // simpan lewat Repo (p_repo): nama unik + folder tanggal + hashed terenkripsi.
+        // nilai yang disimpan di field ini adalah token hashed, setara API RepoUpload.
+        $userId     = Yii::app()->user->id;
+        $timestamp  = time();
+        $uniqueName = $userId . '_' . $timestamp . '_' . bin2hex(random_bytes(8));
+        $subDir     = date('Y-m-d', $timestamp);
+
+        $model = Repo::storeFile($file['tmp_name'], $name, $subDir, $userId, $uniqueName, 'WEB');
+        if (!$model) {
+            echo json_encode(['success' => 'No', 'message' => 'Gagal menyimpan file']);
+            die();
+        }
+
+        echo json_encode([
+            'success'      => 'Yes',
+            'path'         => $model->hashed,
+            'downloadPath' => $model->hashed,
+            'name'         => $model->origin_file_name,
+        ]);
     }
 
 //    public function actionDescription() {
@@ -325,10 +329,11 @@ class UploadFile extends FormField {
 //    }
 
     public function actionThumb($t) {
-        $file = base64_decode($t);
-        if (!is_file($file)) {
-            $file = RepoManager::resolve($file);
+        $resolved = $this->resolveFile($t);
+        if (!$resolved) {
+            return;
         }
+        $file = $resolved['file'];
 
         $supported_image = array(
             'gif',
@@ -362,14 +367,14 @@ class UploadFile extends FormField {
     public function actionCheckFile() {
         $postdata = file_get_contents("php://input");
         $post = json_decode($postdata, true);
-        $file = RepoManager::resolve($post['file']);
-        if (file_exists($file)) {
-			$downloadPath = base64_encode($file);
-			echo json_encode([
-				'status' => 'exist',
-				'desc' => '',
-				'downloadPath' => $downloadPath
-			]);
+        $resolved = $this->resolveFile(isset($post['file']) ? $post['file'] : null);
+        if ($resolved) {
+            echo json_encode([
+                'status' => 'exist',
+                'desc' => '',
+                'downloadPath' => $post['file'],
+                'name' => $resolved['name'],
+            ]);
         } else {
             echo json_encode([
                 'status' => 'not exist',
@@ -378,21 +383,20 @@ class UploadFile extends FormField {
     }
 
     public function actionDownload($f, $n) {
-        $file = base64_decode($f);
-        if (!is_file($file)) {
-            $file = RepoManager::resolve($file);
-            if (!is_file($file)) {
-                throw new CHttpException(404);
-                return false;
-            }
+        $resolved = $this->resolveFile($f);
+        if (!$resolved) {
+            throw new CHttpException(404);
+            return false;
         }
+        $file = $resolved['file'];
+        $name = $resolved['name'] != '' ? $resolved['name'] : $n;
 
         $mem_limit = ini_get('memory_limit');
         ini_set('memory_limit', -1);
         if (isset($_GET['d'])) {
             echo file_get_contents($file);
         } else {
-            Yii::app()->request->sendFile($n, file_get_contents($file));
+            Yii::app()->request->sendFile($name, file_get_contents($file));
         }
         ini_set('memory_limit', $mem_limit);
     }
@@ -400,10 +404,47 @@ class UploadFile extends FormField {
     public function actionRemove() {
         $postdata = file_get_contents("php://input");
         $post = CJSON::decode($postdata);
-        $file = base64_decode($post['file']);
-        $file = RepoManager::resolve($file);
-        @unlink($file);
-//        unlink($file . '.json');
+        if (isset($post['file'])) {
+            $repo = Repo::findByHashed($post['file']);
+            if ($repo) {
+                $repo->deleteFile();
+            } else {
+                $paths = [$post['file'], base64_decode($post['file'])];
+                foreach ($paths as $p) {
+                    if ($p === false || $p === '') {
+                        continue;
+                    }
+                    $resolved = RepoManager::resolve($p);
+                    if (is_file($resolved)) {
+                        @unlink($resolved);
+                    }
+                }
+            }
+        }
+    }
+
+    private function resolveFile($tokenOrPath) {
+        if ($tokenOrPath === null || $tokenOrPath === '') {
+            return null;
+        }
+        $repo = Repo::findByHashed($tokenOrPath);
+        if ($repo) {
+            return [
+                'file' => $repo->getAbsolutePath(),
+                'name' => $repo->origin_file_name,
+            ];
+        }
+        $paths = [$tokenOrPath, base64_decode($tokenOrPath)];
+        foreach ($paths as $p) {
+            if ($p === false || $p === '') {
+                continue;
+            }
+            $resolved = RepoManager::resolve($p);
+            if (is_file($resolved)) {
+                return ['file' => $resolved, 'name' => basename($resolved)];
+            }
+        }
+        return null;
     }
 
     public function getFieldColClass() {

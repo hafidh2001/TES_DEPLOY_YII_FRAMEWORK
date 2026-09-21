@@ -16,7 +16,12 @@ app.directive('psDataFilter', function($timeout, dateFilter, $http, $localStorag
             return function($scope, $el, attrs, ctrl) {
                 var parent = $scope.getParent($scope);
                 $scope.name = $el.find("data[name=name]:eq(0)").text();
+                if (!$scope.name) {
+                    $scope.name = 'filter_' + $el.find("data[name=datasource]:eq(0)").text().trim();
+                }
                 parent[$scope.name] = $scope;
+
+                $scope.storageKey = ($scope.formClassPath || window.location.href);
 
                 /************* All Filter **************/
                 $scope.toggleFilterCriteria = function(e) {
@@ -52,25 +57,30 @@ app.directive('psDataFilter', function($timeout, dateFilter, $http, $localStorag
                 }
 
                 $scope.savePageSetting = function() {
-                    $localStorage.pageSetting[window.location.href] = { 'dataFilters': {} };
-                    $localStorage.pageSetting[window.location.href].dataFilters[$scope.name] = $scope.filters;
+                    if (!$localStorage.pageSetting[$scope.storageKey]) {
+                        $localStorage.pageSetting[$scope.storageKey] = {};
+                    }
+                    if (!$localStorage.pageSetting[$scope.storageKey].dataFilters) {
+                        $localStorage.pageSetting[$scope.storageKey].dataFilters = {};
+                    }
+                    $localStorage.pageSetting[$scope.storageKey].dataFilters[$scope.name] = $scope.filters;
                 }
 
                 $scope.isCached = function() {
 
-                    if (!$localStorage.pageSetting[window.location.href]) return false;
+                    if (!$localStorage.pageSetting[$scope.storageKey]) return false;
 
-                    return !!$localStorage.pageSetting[window.location.href].dataFilters && !!$localStorage.pageSetting[window.location.href].dataFilters[$scope.name];
+                    return !!$localStorage.pageSetting[$scope.storageKey].dataFilters && !!$localStorage.pageSetting[$scope.storageKey].dataFilters[$scope.name];
                 }
 
                 $scope.loadPageSetting = function() {
-                    if (!$localStorage.pageSetting[window.location.href]) {
+                    if (!$localStorage.pageSetting[$scope.storageKey]) {
                         return;
                     }
-                    if (!!$localStorage.pageSetting[window.location.href].dataFilters && !!$localStorage.pageSetting[window.location.href].dataFilters[$scope.name]) {
+                    if (!!$localStorage.pageSetting[$scope.storageKey].dataFilters && !!$localStorage.pageSetting[$scope.storageKey].dataFilters[$scope.name]) {
                         $scope.oldFilters = angular.copy($scope.filters);
                         $scope.filters.length = 0;
-                        $localStorage.pageSetting[window.location.href].dataFilters[$scope.name].forEach(function(filter, k) {
+                        $localStorage.pageSetting[$scope.storageKey].dataFilters[$scope.name].forEach(function(filter, k) {
                             switch (filter.filterType) {
                                 case "dropdown":
                                 case "relation":
@@ -1042,6 +1052,12 @@ app.directive('psDataFilter', function($timeout, dateFilter, $http, $localStorag
                     $container.scroll(function() {
                         $scope.freeze();
                     });
+                }
+
+                $scope.resetPageSetting = function() {
+                    if ($localStorage.pageSetting && $localStorage.pageSetting[$scope.storageKey] && $localStorage.pageSetting[$scope.storageKey].dataFilters) {
+                        delete $localStorage.pageSetting[$scope.storageKey].dataFilters[$scope.name];
+                    }
                 }
 
                 $scope.reset = function() {

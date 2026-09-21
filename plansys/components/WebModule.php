@@ -8,7 +8,7 @@ class WebModule extends CWebModule {
 
     public function beforeControllerAction($controller, $action) {
         $user = User::model()->findByPk(Yii::app()->user->id);
-        if($user['is_deleted']){
+        if($user && $user['is_deleted']){
             Yii::app()->user->logout();
         }
         parent::beforeControllerAction($controller, $action);

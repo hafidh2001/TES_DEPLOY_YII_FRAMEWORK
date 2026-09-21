@@ -25,6 +25,7 @@ app.directive('uploadFile', function ($timeout, Upload, $http) {
                 $scope.fileType = $el.find("data[name=file_type]").html().trim();
                 $scope.restrict = $el.find("data[name=restrict]").html().trim();
                 $scope.options = JSON.parse($el.find("data[name=options]").text());
+                $scope.__repoDeleted = [];
                 $scope.getUrl = function() {
                     if (!$scope.file) return '';
                     
@@ -188,6 +189,13 @@ app.directive('uploadFile', function ($timeout, Upload, $http) {
                                 var ext = $scope.ext(data);
         
                                 if (data.success == 'Yes') {
+                                    // saat mengganti file: hash lama ikut di-hapus
+                                    // ketika form di-save (file + record p_repo).
+                                    if ($scope.value && $scope.value != 'null' &&
+                                        $scope.value != data.path &&
+                                        $scope.__repoDeleted.indexOf($scope.value) < 0) {
+                                        $scope.__repoDeleted.push($scope.value);
+                                    }
                                     $scope.value = data.path;
                                     $scope.file = {
                                         'name': data.name,
@@ -206,8 +214,14 @@ app.directive('uploadFile', function ($timeout, Upload, $http) {
                                     $scope.choose('');
                                     ctrl.$setViewValue('');
                                     alert("Error Uploading File. Max File size: "+$scope.restrict+" KB. \n");
-								} else {
-                                    alert("Error Uploading File. File size too big!. \n");
+								} else if(data.success=='No' && data.message){
+                                    $scope.file = null;
+                                    $scope.value = '';
+                                    $scope.choose('');
+                                    ctrl.$setViewValue('');
+                                    alert(data.message + ". \n");
+                                } else {
+                                    alert("Error Uploading File. File type not allowed!. \n");
                                 }
         
                                 $scope.loading = false;
@@ -243,25 +257,24 @@ app.directive('uploadFile', function ($timeout, Upload, $http) {
                     if ($scope.choosing == 'Browse') {
                         $scope.choose('');
                     } else if (confirm("Are you sure want to remove this file ?")) {
-                        $scope.loading = true;
-                        $scope.errors = [];
-                        var request = $http({
-                            method: "post",
-                            url: Yii.app.createUrl('/formfield/UploadFile.remove'),
-                            data: {file: file}
-                        }).success(function (html) {
-                            $scope.choose('');
-                            $scope.file = null;
-                            $scope.value = '';
-                            ctrl.$setViewValue('');
-                            $scope.loading = false;
-                        }).error(function () {
-                            $scope.loading = false;
-                        });
+                        // soft delete: lepas referensi di form dulu.
+                        // file & record p_repo baru dihapus saat form di-save
+                        // (server membaca __repoDeleted dari POST form).
+                        var gone = (typeof file == 'string' && file) ? file : $scope.value;
+                        if (gone && $scope.__repoDeleted.indexOf(gone) < 0) {
+                            $scope.__repoDeleted.push(gone);
+                        }
+                        $scope.choose('');
+                        $scope.file = null;
+                        $scope.value = '';
+                        ctrl.$setViewValue('');
                     }
                 };
 
                 $scope.reset = function(){
+                    if ($scope.value && $scope.__repoDeleted.indexOf($scope.value) < 0) {
+                        $scope.__repoDeleted.push($scope.value);
+                    }
                     $scope.choose('');
                     $scope.file = null;
                     $scope.value = '';
@@ -350,6 +363,9 @@ app.directive('uploadFile', function ($timeout, Upload, $http) {
                         request.success(function (result) {
                             if (result.status == 'exist') {
                                 $scope.file.downloadPath = result.downloadPath;
+                                if (result.name) {
+                                    $scope.file.name = result.name;
+                                }
                                 $scope.icon($scope.file);
                                 var ext = $scope.ext($scope.file);
                                 if (['jpg', 'gif', 'png', 'jpeg'].indexOf(ext) >= 0) {

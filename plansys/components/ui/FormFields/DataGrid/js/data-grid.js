@@ -1115,6 +1115,9 @@ app.directive('psDataGrid', function ($timeout, $http, Upload, $compile, $ocLazy
                 $scope.Math = window.Math;
                 $scope.grid = null;
                 $scope.name = $el.find("data[name=name]:eq(0)").text();
+                if (!$scope.name) {
+                    $scope.name = 'grid_' + $el.find("data[name=datasource]:eq(0)").text().trim();
+                }
                 $scope.modelClass = $el.find("data[name=model_class]").text();
                 $scope.renderID = $el.find("data[name=render_id]").text();
                 $scope.gridOptions = JSON.parse($el.find("data[name=grid_options]").text());

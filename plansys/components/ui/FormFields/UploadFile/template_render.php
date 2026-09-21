@@ -32,6 +32,11 @@
                    name="<?= $this->renderName ?>" 
                    ng-value="value"
                    />
+            <input type="hidden"
+                   name="__repoDeleted[]"
+                   ng-repeat="h in __repoDeleted"
+                   ng-value="h"
+                   />
             <div ng-if="file == null && (allowOverwrite == 'Yes' || allowOverwrite == 'No' && file === null)" >
 
                 <div ng-if="mode == 'Upload + Browse + Download' && choosing != 'Upload'" class="form-control" style="height:auto;padding-top:0px;padding-bottom:0px;">

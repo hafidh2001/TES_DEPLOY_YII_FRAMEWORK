@@ -1,5 +1,7 @@
 /* global angular, plansys, Yii */
 
+var plansys = typeof plansys == "undefined" ? {} : plansys;
+
 if (!Array.prototype.filter) {
     Array.prototype.filter = function (fn, context) {
         var i,

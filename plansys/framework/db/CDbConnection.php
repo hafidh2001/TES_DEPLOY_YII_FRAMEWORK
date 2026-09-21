@@ -130,13 +130,49 @@ class CDbConnection extends CApplicationComponent
 	 */
 	public $connectionString;
 	/**
-	 * @var string the username for establishing DB connection. Defaults to empty string.
+	 * Kredensial DB (username/password) TIDAK disimpan sebagai properti objek
+	 * supaya tidak bocor saat objek di-var_dump / print_r / var_export / json_encode
+	 * (mis. oleh debugger, error handler, atau log dump). Disimpan di WeakMap
+	 * statis yang ter-referensi objek ini; akses lewat magic getter/setter
+	 * CComponent sehingga pemanggilan $this->username / ->password tetap jalan.
 	 */
-	public $username='';
+	private static $_creds=null;
+	private static function getCredStore() {
+		if (self::$_creds===null) {
+			self::$_creds=new WeakMap();
+		}
+		return self::$_creds;
+	}
 	/**
-	 * @var string the password for establishing DB connection. Defaults to empty string.
+	 * @return string username koneksi DB
 	 */
-	public $password='';
+	public function getUsername() {
+		$store=self::getCredStore();
+		return isset($store[$this]) ? $store[$this][0] : '';
+	}
+	/**
+	 * @param string $username username koneksi DB
+	 */
+	public function setUsername($username) {
+		$store=self::getCredStore();
+		$cur=isset($store[$this]) ? $store[$this] : array('', '');
+		$store[$this]=array((string)$username, $cur[1]);
+	}
+	/**
+	 * @return string password koneksi DB
+	 */
+	public function getPassword() {
+		$store=self::getCredStore();
+		return isset($store[$this]) ? $store[$this][1] : '';
+	}
+	/**
+	 * @param string $password password koneksi DB
+	 */
+	public function setPassword($password) {
+		$store=self::getCredStore();
+		$cur=isset($store[$this]) ? $store[$this] : array('', '');
+		$store[$this]=array($cur[0], (string)$password);
+	}
 	/**
 	 * @var integer number of seconds that table metadata can remain valid in cache.
 	 * Use 0 or negative value to indicate not caching schema.

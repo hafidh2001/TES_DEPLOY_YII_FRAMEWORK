@@ -32,7 +32,6 @@ class Setting {
             'dateTimeFormat' => 'd M Y - H:i',
             'mode'           => 'dev',
             'debug'          => 'ON',
-            'oAuthGoogle'    => 'OFF'
         ],
         'email' => [
             'transport' => [

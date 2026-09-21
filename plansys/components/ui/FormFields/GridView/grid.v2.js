@@ -10,6 +10,9 @@ app.directive('gridView', function($timeout, $http) {
                 // define current form field in parent scope
                 var parent = $scope.getParent($scope);
                 $scope.name = $el.find("data[name=name]:eq(0)").html().trim();
+                if (!$scope.name) {
+                    $scope.name = 'grid_' + $el.find("data[name=datasource]:eq(0)").text().trim();
+                }
                 parent[$scope.name] = $scope;
 
                 // define vars
