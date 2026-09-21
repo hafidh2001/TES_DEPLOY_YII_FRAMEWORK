@@ -771,6 +771,17 @@ Alur & status file (sama seperti API `RepoUpload`):
 - Menghapus/ganti file di form → file lama ikut dihapus dari repo (soft-delete `__repoDeleted`).
 - File `temp` yang barisnya tidak pernah tersimpan di-sweep oleh command `cleanRepo` (lihat § 9 File Repository).
 
+#### Fallback path lama (proyek yang belum pakai hash)
+
+Pada proyek yang di-*upgrade* — `value` UploadFile di database masih berupa **path** (misal `2023-09-05/foto.jpg` atau path absolut repo), bukan token 64-hex. `UploadFile::resolveFile()` mendeteksi otomatis:
+
+- Nilai berupa **64 karakter hex** → dianggap token hash → dicari di `p_repo` (`Repo::findByHashed`).
+- Nilai **selain itu** → dianggap path lama → di-*resolve* langsung lewat `RepoManager::resolve()` dan ditampilkan/diunduh tanpa menyentuh `p_repo`.
+
+Deteksi ini dipakai `actionDownload`, `actionThumb`, dan `actionCheckFile`, jadi nilai path lama tetap tampil (nama file = `basename`) dan bisa diunduh. Pengecekan seragam memakai `UploadFile::isHashed($value)`.
+
+Catatan: `ActiveRecord::doAfterSave()` hanya memindai atribut 64-hex untuk `markCommitted()`, sehingga path lama tidak ikut di-flag — tetapi file path lama yang dihapus lewat tombol delete belum dibersihkan fisiknya saat save (perlu penanganan `__repoDeleted` untuk jalur path).
+
 ---
 
 ### 5.17 UploadFileNative (Browser-native upload)

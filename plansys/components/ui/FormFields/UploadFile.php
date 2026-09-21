@@ -427,13 +427,21 @@ class UploadFile extends FormField {
         if ($tokenOrPath === null || $tokenOrPath === '') {
             return null;
         }
-        $repo = Repo::findByHashed($tokenOrPath);
-        if ($repo) {
-            return [
-                'file' => $repo->getAbsolutePath(),
-                'name' => $repo->origin_file_name,
-            ];
+
+        ## 1) token hash (64 hex) => cari metadata di p_repo
+        if (self::isHashed($tokenOrPath)) {
+            $repo = Repo::findByHashed($tokenOrPath);
+            if ($repo) {
+                return [
+                    'file' => $repo->getAbsolutePath(),
+                    'name' => $repo->origin_file_name,
+                ];
+            }
+            return null;
         }
+
+        ## 2) fallback proyek lama: value di DB berupa path (bukan hash).
+        ##    Tampilkan & pakai path tersebut langsung tanpa p_repo.
         $paths = [$tokenOrPath, base64_decode($tokenOrPath)];
         foreach ($paths as $p) {
             if ($p === false || $p === '') {
@@ -445,6 +453,17 @@ class UploadFile extends FormField {
             }
         }
         return null;
+    }
+
+    /**
+     * Cek apakah nilai adalah token hash (64 karakter hex) milik p_repo,
+     * atau masih berupa path biasa dari proyek yang belum pakai hash.
+     * @param mixed $value
+     * @return bool
+     */
+    public static function isHashed($value) {
+        return is_string($value) && $value != '' && $value != 'null' &&
+            preg_match('~^[0-9a-f]{64}$~i', $value);
     }
 
     public function getFieldColClass() {
