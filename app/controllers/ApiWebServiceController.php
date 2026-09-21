@@ -19,8 +19,6 @@ class ApiWebServiceController extends Controller {
     public function actiongetHaped() {
         echo("HALO MAS HAPED");die;
     }
-    
-
 
     // === AUTH STAGE ===
     public function actionLogin() {
@@ -1270,6 +1268,8 @@ class ApiWebServiceController extends Controller {
                     mu.address,
                     mu.date_of_birth,
                     mu.code AS nim,
+                    mu.inactive_at,
+                    mu.inactive_notes,
                     mr.name AS role_name,
                     ms.name AS stase_name,
                     (
@@ -2027,6 +2027,271 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     // === STAFF STAGE ===
+    
+    // === HOSPITAL ===
+    public function actionGetListHospital() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+        if (!isset($post['id_client'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+
+        // pagination default
+        $page  = isset($post['page']) ? (int)$post['page'] : 1;
+        $limit = isset($post['limit']) ? (int)$post['limit'] : 10;
+        $offset = ($page - 1) * $limit;
+
+        // sorting (default ASC)
+        $sort = (isset($post['sort']) && strtolower($post['sort']) === 'desc') ? 'DESC' : 'ASC';
+
+        $sql = 'SELECT
+                    mh.id,
+                    mh.name,
+                    mh.address,
+                    mh.code
+                FROM m_hospital mh
+                WHERE
+                    mh.id_client = :id_client';
+        
+        $countSql = 'SELECT COUNT(*)
+                FROM m_hospital mh
+                WHERE
+                    mh.id_client = :id_client';
+    
+        $params = [
+            ':id_client' => $post['id_client'],
+        ];
+
+        // 🔥 search filter - ILIKE across multiple fields
+        if (!empty($post['search'])) {
+            $searchTerm = '%' . $post['search'] . '%';
+            $sql      .= ' AND (
+                mh.name ILIKE :search
+                OR mh.code ILIKE :search
+                OR mh.address ILIKE :search
+            )';
+            $countSql .= ' AND (
+                mh.name ILIKE :search
+                OR mh.code ILIKE :search
+                OR mh.address ILIKE :search
+            )';
+            $params[':search'] = $searchTerm;
+        }
+
+        // sorting + pagination
+        $sql .= " ORDER BY
+                    mh.name
+                    $sort
+                LIMIT :limit
+                OFFSET :offset";
+
+        $command      = Yii::app()->db->createCommand($sql);
+        $countCommand = Yii::app()->db->createCommand($countSql);
+
+        foreach ($params as $key => $val) {
+            $command->bindValue($key, $val);
+            $countCommand->bindValue($key, $val);
+        }
+
+        $command->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $command->bindValue(':offset', $offset, PDO::PARAM_INT);
+
+        $res   = $command->queryAll();
+        $total = $countCommand->queryScalar();
+
+        echo json_encode([
+            'status' => true,
+            'total'  => (int)$total,
+            'data'   => $res,
+            'pagination' => [
+                'page'   => $page,
+                'limit'  => $limit,
+            ]
+        ]);
+    }
+    
+    public function actionDeleteHospital() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+        
+        if (!isset($post['id_hospital'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+        
+        try {
+            $hospital = MHospital::model()->findByPk($post['id_hospital']);
+    
+            if (!$hospital) {
+                echo json_encode([
+                    'status' => false,
+                    'message' => 'Hospital not found!'
+                ]);
+                Yii::app()->end();
+            }
+    
+            if (!$hospital->delete()) {
+                echo json_encode([
+                    'status' => false,
+                    'message' => 'Failed to delete hospital!'
+                ]);
+                Yii::app()->end();
+            }
+    
+            echo json_encode([
+                'status' => true,
+                'message' => 'Hospital deleted successfully!'
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                'status' => false,
+                'message' => $e->getMessage()
+            ]);
+        }
+        Yii::app()->end();
+    }
+    
+    public function actionCreateHospital() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+        
+        if (
+            !isset($post['id_client']) ||
+            !isset($post['created_by']) ||
+            !isset($post['name']) ||
+            !isset($post['code'])
+        ) {
+            echo json_encode([
+                'status'  => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+        
+        try {
+            $hospital               = new MHospital;
+            $hospital->id_client    = $post['id_client'];
+            $hospital->created_date = date('Y-m-d H:i:s');
+            $hospital->created_by   = $post['created_by'];
+            $hospital->name         = $post['name'];
+            $hospital->code         = $post['code'];
+            $hospital->address      = $post['address'] ?? null;
+            $hospital->notes        = $post['notes'] ?? null;
+            $hospital->save(false);
+
+            echo json_encode([
+                'status'  => true,
+                'message' => 'Data berhasil dibuat!',
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                'status'  => false,
+                'message' => $e->getMessage()
+            ]);
+        }
+        Yii::app()->end();
+    }
+    
+    public function actionUpdateHospital() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+       if (
+            !isset($post['id_hospital']) ||
+            !isset($post['id_client']) ||
+            !isset($post['created_by']) ||
+            !isset($post['name']) ||
+            !isset($post['code'])
+        ) {
+            echo json_encode([
+                'status'  => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+
+        $hospital = MHospital::model()->findByPk($post['id_hospital']);
+
+        if (!$hospital) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Hospital not found!'
+            ]);
+            Yii::app()->end();
+        }
+
+        try {
+            $hospital->id_client    = $post['id_client'];
+            $hospital->updated_date = date('Y-m-d H:i:s');
+            $hospital->updated_by   = $post['updated_by'];
+            $hospital->name         = $post['name'] ?? $hospital->name;
+            $hospital->code         = $post['code'] ?? $hospital->code;
+            $hospital->address      = $post['address'] ?? $hospital->address;
+            $hospital->notes        = $post['notes'] ?? $hospital->notes;
+            $hospital->save(false);
+
+            echo json_encode([
+                'status'  => true,
+                'message' => 'Data berhasil diupdate!',
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                'status'  => false,
+                'message' => $e->getMessage()
+            ]);
+        }
+        Yii::app()->end();
+    }
+    
+    public function actionGetDetailHospital() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+        if (!isset($post['id_hospital'])) {
+            echo json_encode([
+                'status'  => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+
+        $sql = "
+            SELECT
+                mh.id,
+                mh.name,
+                mh.code,
+                mh.address,
+                mh.notes
+            FROM m_hospital mh
+            WHERE
+                mh.id = :id_hospital";
+
+        $command = Yii::app()->db->createCommand($sql);
+        $command->bindValue(':id_hospital', $post['id_hospital']);
+        $data = $command->queryRow();
+
+        if (!$data) {
+            echo json_encode([
+                'status'  => false,
+                'message' => 'Data not found'
+            ]);
+            Yii::app()->end();
+        }
+
+        echo json_encode([
+            'status' => true,
+            'data'   => $data
+        ]);
+    }
+    // === HOSPITAL ===
 
 
 
@@ -3194,6 +3459,7 @@ class ApiWebServiceController extends Controller {
             WHERE tl.id_client = :id_client
                 AND tl.deleted_at IS NULL
                 AND ma.identifier != 'stase'
+                AND tl.verified_status != 'approved'
             GROUP BY verified_status
         ";
 

@@ -3,9 +3,8 @@
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Headers: *");
 
-
-class ApiMobileServiceController extends Controller {
-
+class ApiMobileServiceController extends Controller
+{
     public $enableCsrfValidation = false;
 
     // public function filters() {
@@ -14,380 +13,405 @@ class ApiMobileServiceController extends Controller {
 
     // public function accessRules() {
     //     return [
-    //         ['allow', 'actions' => ['getUser', 'login', 'editProfile', 'ChangePassword', 'GetMasterPpds', 'getMasterStase', 
-    //         'CreateLogbookMilestone', 'GetMasterStaff', 'GetMasterAction', 'GetLogbook', 'GetMilestoneNotTaken', 
+    //         ['allow', 'actions' => ['getUser', 'login', 'editProfile', 'ChangePassword', 'GetMasterPpds', 'getMasterStase',
+    //         'CreateLogbookMilestone', 'GetMasterStaff', 'GetMasterAction', 'GetLogbook', 'GetMilestoneNotTaken',
     //         'GetMilestoneTaken', 'GetMasterSemester', 'GetMilestoneStaff', 'GetNotification', 'GetTodo', 'GetListExplorePpds'], 'users' => ['*']], // tambah 'login'
     //         ['deny']
     //     ];
     // }
-    
+
     // ==========================================================================================================================================================
     // ====================================================================== User Section ======================================================================
     // ==========================================================================================================================================================
-    public function actionLogin() {
-        
-        header('Content-Type: application/json');
+    public function actionLogin()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
-        if (!isset($post['username']) || !isset($post['password'])) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'Username dan password wajib diisi'
-            ]);
-            Yii::app()->end();
-        }
-    
-        $username = $post['username'];
-        $password = $post['password'];
 
-    try {
-        // Step 1: Cek username
-        $cek = Yii::app()->dbPrasi->createCommand()
-            ->select('id, username, password')
-            ->from('m_user')
-            ->where('username = :username', [':username' => $username])
-            ->queryRow();
-
-        if (!$cek) {
+        if (!isset($post["username"]) || !isset($post["password"])) {
             echo json_encode([
-                'success' => false,
-                'message' => 'Username tidak ditemukan'
+                "success" => false,
+                "message" => "Username dan password wajib diisi",
             ]);
             Yii::app()->end();
         }
 
-        // Step 2: Verifikasi bcrypt
-        if (!password_verify($password, $cek['password'])) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'Password salah'
-            ]);
-            Yii::app()->end();
-        }
-        
-        $user = Yii::app()->dbPrasi->createCommand()
-            ->select('
-                u.id,
-                u.display_name,
-                u.code,
-                u.username,
-                u.id_role,
-                u.email,
-                u.address,
-                u.date_of_birth,
-                u.phone,
-                r.name AS role_name,
-                u.id_client,
-                c.name AS client_name,
-                u.id_semester,
-                msem.name AS semester_name,
-                u.id_stase,
-                ms.name AS stase_name,
-                u.status
-            ')
-            ->from('m_user u')
-            ->leftJoin('m_role r', 'r.id = u.id_role')
-            ->leftJoin('m_client c', 'c.id = u.id_client')
-            ->leftJoin('m_stase ms', 'ms.id = u.id_stase')
-            ->leftJoin('m_semester msem', 'msem.id = u.id_semester')
-            ->where('u.username = :username', [':username' => $username])
-            ->queryRow();
-        
-            echo json_encode([
-                'success' => true,
-                'message' => 'Login berhasil',
-                'data' => $user
-            ]);
-    
-        } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
-            ]);
-        }
-    
-        Yii::app()->end();
-    }
-    
-    public function actionEditProfile() {
-        header('Content-Type: application/json');
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-    
-        // Validasi input
-        if (!isset($post['id'])) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'ID user wajib diisi'
-            ]);
-            Yii::app()->end();
-        }
-    
+        $username = $post["username"];
+        $password = $post["password"];
+
         try {
-            // Cek user ada atau tidak
-            $cek = Yii::app()->dbPrasi->createCommand()
-                ->select('id')
-                ->from('m_user')
-                ->where('id = :id', [':id' => $post['id']])
+            // Step 1: Cek username
+            $cek = Yii::app()
+                ->dbPrasi->createCommand()
+                ->select("id, username, password")
+                ->from("m_user")
+                ->where("username = :username", [":username" => $username])
                 ->queryRow();
-    
+
             if (!$cek) {
                 echo json_encode([
-                    'success' => false,
-                    'message' => 'User tidak ditemukan'
+                    "success" => false,
+                    "message" => "Username tidak ditemukan",
                 ]);
                 Yii::app()->end();
             }
-    
+
+            // Step 2: Verifikasi bcrypt
+            if (!password_verify($password, $cek["password"])) {
+                echo json_encode([
+                    "success" => false,
+                    "message" => "Password salah",
+                ]);
+                Yii::app()->end();
+            }
+
+            $user = Yii::app()
+                ->dbPrasi->createCommand()
+                ->select(
+                    '
+                    u.id,
+                    u.display_name,
+                    u.code,
+                    u.username,
+                    u.id_role,
+                    u.email,
+                    u.address,
+                    u.date_of_birth,
+                    u.phone,
+                    r.name AS role_name,
+                    u.id_client,
+                    c.name AS client_name,
+                    u.id_semester,
+                    msem.name AS semester_name,
+                    u.id_stase,
+                    ms.name AS stase_name,
+                    u.status,
+                    COALESCE(SUM(tmph.points), 0) AS total_points
+                ',
+                )
+                ->from("m_user u")
+                ->leftJoin("m_role r", "r.id = u.id_role")
+                ->leftJoin("m_client c", "c.id = u.id_client")
+                ->leftJoin("m_stase ms", "ms.id = u.id_stase")
+                ->leftJoin("m_semester msem", "msem.id = u.id_semester")
+                ->leftJoin("t_morbiditas_points_history tmph", "tmph.id_user = u.id")
+                ->where("u.username = :username", [":username" => $username])
+                ->group(
+                    '
+                    u.id, r.name, c.name, ms.name, msem.name
+                ',
+                )
+                ->queryRow();
+
+            echo json_encode([
+                "success" => true,
+                "message" => "Login berhasil",
+                "data" => $user,
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => $e->getMessage(),
+            ]);
+        }
+
+        Yii::app()->end();
+    }
+
+    public function actionEditProfile()
+    {
+        header("Content-Type: application/json");
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+        // Validasi input
+        if (!isset($post["id"])) {
+            echo json_encode([
+                "success" => false,
+                "message" => "ID user wajib diisi",
+            ]);
+            Yii::app()->end();
+        }
+
+        try {
+            // Cek user ada atau tidak
+            $cek = Yii::app()
+                ->dbPrasi->createCommand()
+                ->select("id")
+                ->from("m_user")
+                ->where("id = :id", [":id" => $post["id"]])
+                ->queryRow();
+
+            if (!$cek) {
+                echo json_encode([
+                    "success" => false,
+                    "message" => "User tidak ditemukan",
+                ]);
+                Yii::app()->end();
+            }
+
             // Whitelist field yang boleh diupdate
-            $allowedFields = ['display_name', 'email', 'phone', 'address', 'date_of_birth'];
-    
+            $allowedFields = ["display_name", "email", "phone", "address", "date_of_birth"];
+
             $data = [];
             foreach ($allowedFields as $field) {
                 if (isset($post[$field])) {
                     $data[$field] = $post[$field];
                 }
             }
-    
+
             if (empty($data)) {
                 echo json_encode([
-                    'success' => false,
-                    'message' => 'Tidak ada data yang diupdate'
+                    "success" => false,
+                    "message" => "Tidak ada data yang diupdate",
                 ]);
                 Yii::app()->end();
             }
-    
+
             // Raw SQL - hanya update field yang ada
             $setParts = [];
-            $params   = [':id' => $post['id']];
-    
+            $params = [":id" => $post["id"]];
+
             foreach ($data as $field => $value) {
-                $setParts[]        = "$field = :$field";
+                $setParts[] = "$field = :$field";
                 $params[":$field"] = $value;
             }
-    
-            $sql = "UPDATE m_user SET " . implode(', ', $setParts) . " WHERE id = :id";
+
+            $sql = "UPDATE m_user SET " . implode(", ", $setParts) . " WHERE id = :id";
             Yii::app()->dbPrasi->createCommand($sql)->execute($params);
-    
+
             // Ambil data terbaru
-            $user = Yii::app()->dbPrasi->createCommand()
-                ->select('
+            $user = Yii::app()
+                ->dbPrasi->createCommand()
+                ->select(
+                    '
                     u.id, u.display_name, u.code, u.username, u.id_role, u.email,
                     u.address, u.date_of_birth, u.phone, r.name as role_name,
                     u.id_client, c.name as client_name, u.id_semester, u.id_stase,
                     u.status
-                ')
-                ->from('m_user u')
-                ->leftJoin('m_role r', 'r.id = u.id_role')
-                ->leftJoin('m_client c', 'c.id = u.id_client')
-                ->where('u.id = :id', [':id' => $post['id']])
+                ',
+                )
+                ->from("m_user u")
+                ->leftJoin("m_role r", "r.id = u.id_role")
+                ->leftJoin("m_client c", "c.id = u.id_client")
+                ->where("u.id = :id", [":id" => $post["id"]])
                 ->queryRow();
-    
+
             echo json_encode([
-                'success' => true,
-                'message' => 'Profile berhasil diupdate',
-                'data'    => $user
+                "success" => true,
+                "message" => "Profile berhasil diupdate",
+                "data" => $user,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
-        Yii::app()->end();
-    }
-    
-    public function actionChangePassword() {
-        header('Content-Type: application/json');
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-    
-        // Validasi input
-        if (!isset($post['id']) || !isset($post['old_password']) || !isset($post['new_password']) || !isset($post['confirm_password'])) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'ID, password lama, password baru, dan konfirmasi password wajib diisi'
-            ]);
-            Yii::app()->end();
-        }
-    
-        // Cek new_password dan confirm_password sama
-        if ($post['new_password'] !== $post['confirm_password']) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'Password baru dan konfirmasi password tidak sama'
-            ]);
-            Yii::app()->end();
-        }
-    
-        // Minimal panjang password
-        if (strlen($post['new_password']) < 6) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'Password baru minimal 6 karakter'
-            ]);
-            Yii::app()->end();
-        }
-    
-        try {
-            // Cek user ada atau tidak
-            $cek = Yii::app()->dbPrasi->createCommand()
-                ->select('id, password')
-                ->from('m_user')
-                ->where('id = :id', [':id' => $post['id']])
-                ->queryRow();
-    
-            if (!$cek) {
-                echo json_encode([
-                    'success' => false,
-                    'message' => 'User tidak ditemukan'
-                ]);
-                Yii::app()->end();
-            }
-    
-            // Verifikasi password lama
-            if (!password_verify($post['old_password'], $cek['password'])) {
-                echo json_encode([
-                    'success' => false,
-                    'message' => 'Password lama salah'
-                ]);
-                Yii::app()->end();
-            }
-    
-            // Hash password baru dengan bcrypt
-            $newPasswordHash = password_hash($post['new_password'], PASSWORD_BCRYPT);
-    
-            // Update password
-            Yii::app()->dbPrasi->createCommand()->update(
-                'm_user',
-                ['password' => $newPasswordHash],
-                'id = :id',
-                [':id' => $post['id']]
-            );
-    
-            echo json_encode([
-                'success' => true,
-                'message' => 'Password berhasil diubah'
-            ]);
-    
-        } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
-            ]);
-        }
-    
-        Yii::app()->end();
-    }
-    
-    
-    // ==========================================================================================================================================================
-    // ====================================================================== Master Section ======================================================================
-    // ==========================================================================================================================================================
-    
-    public function actionGetMasterPpds() {
-        header('Content-Type: application/json');
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-    
-        // id_client wajib diisi agar data sesuai client user yang login
-        if (!isset($post['id_client'])) {
-            echo json_encode([
-                'success' => false,
-                'message' => 'id_client wajib diisi'
-            ]);
-            Yii::app()->end();
-        }
-    
-        try {
-            $data = Yii::app()->db->createCommand()
-                ->select('u.id, u.display_name, u.id_client, u.status, u.is_show, r.name as role_name')
-                ->from('m_user u')
-                ->leftJoin('m_role r', 'r.id = u.id_role')
-                ->where('u.deleted_at IS NULL AND u.is_show = true AND u.status = :status AND r.name = :role AND u.id_client = :id_client', [
-                    ':status'    => 'Active',
-                    ':role'      => 'ppds',
-                    ':id_client' => $post['id_client']
-                ])
-                ->order('u.display_name ASC')
-                ->queryAll();
-    
-            echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
-            ]);
-    
-        } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
-            ]);
-        }
-    
+
         Yii::app()->end();
     }
 
-    public function actionGetMasterStaff() {
-        header('Content-Type: application/json');
+    public function actionChangePassword()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
-        // id_client wajib diisi agar data sesuai client user yang login
-        if (!isset($post['id_client'])) {
+
+        // Validasi input
+        if (
+            !isset($post["id"]) ||
+            !isset($post["old_password"]) ||
+            !isset($post["new_password"]) ||
+            !isset($post["confirm_password"])
+        ) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_client wajib diisi'
+                "success" => false,
+                "message" => "ID, password lama, password baru, dan konfirmasi password wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
-        try {
-            $data = Yii::app()->db->createCommand()
-                ->select('mu.id, mu.display_name')
-                ->from('m_user mu')
-                ->join('m_role mr', 'mr.id = mu.id_role')
-                ->where('mr.name = :role AND mu.id_client = :id_client AND mu.status = :status AND mu.is_show = true AND mu.deleted_at IS NULL', [
-                    ':role'      => 'staff',
-                    ':id_client' => $post['id_client'],
-                    ':status'    => 'Active',
-                ])
-                ->order('mu.display_name ASC')
-                ->queryAll();
-    
+
+        // Cek new_password dan confirm_password sama
+        if ($post["new_password"] !== $post["confirm_password"]) {
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => false,
+                "message" => "Password baru dan konfirmasi password tidak sama",
             ]);
-    
+            Yii::app()->end();
+        }
+
+        // Minimal panjang password
+        if (strlen($post["new_password"]) < 6) {
+            echo json_encode([
+                "success" => false,
+                "message" => "Password baru minimal 6 karakter",
+            ]);
+            Yii::app()->end();
+        }
+
+        try {
+            // Cek user ada atau tidak
+            $cek = Yii::app()
+                ->dbPrasi->createCommand()
+                ->select("id, password")
+                ->from("m_user")
+                ->where("id = :id", [":id" => $post["id"]])
+                ->queryRow();
+
+            if (!$cek) {
+                echo json_encode([
+                    "success" => false,
+                    "message" => "User tidak ditemukan",
+                ]);
+                Yii::app()->end();
+            }
+
+            // Verifikasi password lama
+            if (!password_verify($post["old_password"], $cek["password"])) {
+                echo json_encode([
+                    "success" => false,
+                    "message" => "Password lama salah",
+                ]);
+                Yii::app()->end();
+            }
+
+            // Hash password baru dengan bcrypt
+            $newPasswordHash = password_hash($post["new_password"], PASSWORD_BCRYPT);
+
+            // Update password
+            Yii::app()
+                ->dbPrasi->createCommand()
+                ->update("m_user", ["password" => $newPasswordHash], "id = :id", [":id" => $post["id"]]);
+
+            echo json_encode([
+                "success" => true,
+                "message" => "Password berhasil diubah",
+            ]);
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    public function actionGetMasterSemester() {
-        header('Content-Type: application/json');
+
+    // ==========================================================================================================================================================
+    // ====================================================================== Master Section ======================================================================
+    // ==========================================================================================================================================================
+
+    public function actionGetMasterPpds()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
-        // Validasi wajib
-        if (!isset($post['id_client'])) {
+
+        // id_client wajib diisi agar data sesuai client user yang login
+        if (!isset($post["id_client"])) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_client wajib diisi'
+                "success" => false,
+                "message" => "id_client wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
+
+        try {
+            $data = Yii::app()
+                ->db->createCommand()
+                ->select("u.id, u.display_name, u.id_client, u.status, u.is_show, r.name as role_name")
+                ->from("m_user u")
+                ->leftJoin("m_role r", "r.id = u.id_role")
+                ->where(
+                    "u.deleted_at IS NULL AND u.is_show = true AND u.status = :status AND r.name = :role AND u.id_client = :id_client",
+                    [
+                        ":status" => "Active",
+                        ":role" => "ppds",
+                        ":id_client" => $post["id_client"],
+                    ],
+                )
+                ->order("u.display_name ASC")
+                ->queryAll();
+
+            echo json_encode([
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => $e->getMessage(),
+            ]);
+        }
+
+        Yii::app()->end();
+    }
+
+    public function actionGetMasterStaff()
+    {
+        header("Content-Type: application/json");
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+        // id_client wajib diisi agar data sesuai client user yang login
+        if (!isset($post["id_client"])) {
+            echo json_encode([
+                "success" => false,
+                "message" => "id_client wajib diisi",
+            ]);
+            Yii::app()->end();
+        }
+
+        try {
+            $data = Yii::app()
+                ->db->createCommand()
+                ->select("mu.id, mu.display_name")
+                ->from("m_user mu")
+                ->join("m_role mr", "mr.id = mu.id_role")
+                ->where(
+                    "mr.name = :role AND mu.id_client = :id_client AND mu.status = :status AND mu.is_show = true AND mu.deleted_at IS NULL",
+                    [
+                        ":role" => "staff",
+                        ":id_client" => $post["id_client"],
+                        ":status" => "Active",
+                    ],
+                )
+                ->order("mu.display_name ASC")
+                ->queryAll();
+
+            echo json_encode([
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => $e->getMessage(),
+            ]);
+        }
+
+        Yii::app()->end();
+    }
+
+    public function actionGetMasterSemester()
+    {
+        header("Content-Type: application/json");
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+        // Validasi wajib
+        if (!isset($post["id_client"])) {
+            echo json_encode([
+                "success" => false,
+                "message" => "id_client wajib diisi",
+            ]);
+            Yii::app()->end();
+        }
+
         try {
             $sql = "
                 SELECT
@@ -405,67 +429,63 @@ class ApiMobileServiceController extends Controller {
                 WHERE smt.id_client = :id_client
                 ORDER BY smt.id ASC
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_client', $post['id_client'])
-                ->queryAll();
-    
+
+            $rows = Yii::app()->db->createCommand($sql)->bindValue(":id_client", $post["id_client"])->queryAll();
+
             $data = [];
             foreach ($rows as $row) {
                 $data[] = [
-                    'id'        => $row['id'],
-                    'name'      => $row['name'],
-                    'id_stage'  => $row['id_stage'],
-                    'id_client' => $row['id_client'],
-                    'm_stage'   => [
-                        'id'          => $row['_stage_id'],
-                        'name'        => $row['_stage_name'],
-                        'label_color' => $row['_stage_label_color'],
-                        'code'        => $row['_stage_code'],
-                        'id_client'   => $row['_stage_id_client'],
+                    "id" => $row["id"],
+                    "name" => $row["name"],
+                    "id_stage" => $row["id_stage"],
+                    "id_client" => $row["id_client"],
+                    "m_stage" => [
+                        "id" => $row["_stage_id"],
+                        "name" => $row["_stage_name"],
+                        "label_color" => $row["_stage_label_color"],
+                        "code" => $row["_stage_code"],
+                        "id_client" => $row["_stage_id_client"],
                     ],
                 ];
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    
-    
+
     // ==========================================================================================================================================================
     // ====================================================================== Home Section ======================================================================
     // ==========================================================================================================================================================
-    
+
     // api show menu
-    public function actionGetMasterAction() {
-        header('Content-Type: application/json');
+    public function actionGetMasterAction()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
+        if (!isset($post["id_client"])) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_client wajib diisi'
+                "success" => false,
+                "message" => "id_client wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
+
         try {
-            if (is_null($post['id_semester'])) {
+            if (is_null($post["id_semester"])) {
                 $sql = "
                     SELECT
                         ma.id AS id_action,
@@ -485,11 +505,11 @@ class ApiMobileServiceController extends Controller {
                         END,
                         ma.name ASC
                 ";
-    
-                $data = Yii::app()->dbPrasi->createCommand($sql)
-                    ->bindParam(':id_client', $post['id_client'])
+
+                $data = Yii::app()
+                    ->dbPrasi->createCommand($sql)
+                    ->bindParam(":id_client", $post["id_client"])
                     ->queryAll();
-    
             } else {
                 $sql = "
                     SELECT
@@ -512,56 +532,61 @@ class ApiMobileServiceController extends Controller {
                         END,
                         ma.name ASC
                 ";
-    
-                $data = Yii::app()->dbPrasi->createCommand($sql)
-                    ->bindParam(':id_client', $post['id_client'])
-                    ->bindParam(':id_semester', $post['id_semester'])
+
+                $data = Yii::app()
+                    ->dbPrasi->createCommand($sql)
+                    ->bindParam(":id_client", $post["id_client"])
+                    ->bindParam(":id_semester", $post["id_semester"])
                     ->queryAll();
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
 
-
-    public function actionGetLogbook() {
-        header('Content-Type: application/json');
+    public function actionGetLogbook()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
-        if (!isset($post['id_client']) || !isset($post['id_action']) || !isset($post['role']) || !isset($post['user_id'])) {
+
+        if (
+            !isset($post["id_client"]) ||
+            !isset($post["id_action"]) ||
+            !isset($post["role"]) ||
+            !isset($post["user_id"])
+        ) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_client, id_action, role, user_id wajib diisi'
+                "success" => false,
+                "message" => "id_client, id_action, role, user_id wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
+
         try {
-            $role   = $post['role'];
-            $userId = $post['user_id'];
+            $role = $post["role"];
+            $userId = $post["user_id"];
             $params = [
-                ':id_action' => $post['id_action'],
-                ':id_client' => $post['id_client'],
+                ":id_action" => $post["id_action"],
+                ":id_client" => $post["id_client"],
             ];
-    
+
             // Filter berdasarkan role
-            if ($role === 'ppds') {
+            if ($role === "ppds") {
                 $roleFilter = "t.id_user = :user_id";
-                $params[':user_id'] = $userId;
-            } elseif ($role === 'staff') {
+                $params[":user_id"] = $userId;
+            } elseif ($role === "staff") {
                 $roleFilter = "
                     m_user.is_show = true 
                     AND m_user.status = 'Active'
@@ -570,7 +595,7 @@ class ApiMobileServiceController extends Controller {
             } else {
                 $roleFilter = "1=1";
             }
-    
+
             $sql = "
                 SELECT
                     t.*,
@@ -606,52 +631,56 @@ class ApiMobileServiceController extends Controller {
                     AND ($roleFilter)
                 ORDER BY t.created_date DESC
             ";
-    
+
             $command = Yii::app()->dbPrasi->createCommand($sql);
             foreach ($params as $key => $value) {
                 $command->bindValue($key, $value);
             }
-    
+
             $rows = $command->queryAll();
-    
+
             // Susun nested structure
             $data = [];
             foreach ($rows as $row) {
                 $logbook = [];
-    
+
                 // Field utama t_logbook
                 foreach ($row as $key => $value) {
-                    if (strpos($key, '_') !== 0) {
+                    if (strpos($key, "_") !== 0) {
                         $logbook[$key] = $value;
                     }
                 }
-    
+
                 // Nested m_user
-                $logbook['m_user'] = [
-                    'display_name' => $row['_peserta_display_name'],
+                $logbook["m_user"] = [
+                    "display_name" => $row["_peserta_display_name"],
                 ];
-    
+
                 // Nested m_hospital
-                $logbook['m_hospital'] = $row['_hospital_id'] ? [
-                    'id'   => $row['_hospital_id'],
-                    'name' => $row['_hospital_name'],
-                ] : null;
-    
+                $logbook["m_hospital"] = $row["_hospital_id"]
+                    ? [
+                        "id" => $row["_hospital_id"],
+                        "name" => $row["_hospital_name"],
+                    ]
+                    : null;
+
                 // Nested m_action_category
-                $logbook['m_action_category'] = [
-                    'id'   => $row['_category_id'],
-                    'name' => $row['_category_name'],
+                $logbook["m_action_category"] = [
+                    "id" => $row["_category_id"],
+                    "name" => $row["_category_name"],
                 ];
-    
+
                 // Nested m_stase
-                $logbook['m_stase'] = $row['_stase_id'] ? [
-                    'id'        => $row['_stase_id'],
-                    'name'      => $row['_stase_name'],
-                    'id_stage'  => $row['_stase_id_stage'],
-                    'id_client' => $row['_stase_id_client'],
-                    'sequence'  => $row['_stase_sequence'],
-                ] : null;
-    
+                $logbook["m_stase"] = $row["_stase_id"]
+                    ? [
+                        "id" => $row["_stase_id"],
+                        "name" => $row["_stase_name"],
+                        "id_stage" => $row["_stase_id_stage"],
+                        "id_client" => $row["_stase_id_client"],
+                        "sequence" => $row["_stase_sequence"],
+                    ]
+                    : null;
+
                 // Nested t_logbook_status (ambil terpisah)
                 $statusSql = "
                     SELECT tls.*, mar.role, mu.display_name AS staff_name
@@ -660,55 +689,56 @@ class ApiMobileServiceController extends Controller {
                     LEFT JOIN m_user mu ON tls.id_user = mu.id
                     WHERE tls.id_logbook = :id_logbook
                 ";
-                $logbook['t_logbook_status'] = Yii::app()->dbPrasi->createCommand($statusSql)
-                    ->bindValue(':id_logbook', $row['id'])
+                $logbook["t_logbook_status"] = Yii::app()
+                    ->dbPrasi->createCommand($statusSql)
+                    ->bindValue(":id_logbook", $row["id"])
                     ->queryAll();
-    
+
                 // Nested t_logbook_asm (ambil terpisah)
                 $asmSql = "SELECT * FROM t_logbook_asm WHERE id_logbook = :id_logbook";
-                $logbook['t_logbook_asm'] = Yii::app()->dbPrasi->createCommand($asmSql)
-                    ->bindValue(':id_logbook', $row['id'])
+                $logbook["t_logbook_asm"] = Yii::app()
+                    ->dbPrasi->createCommand($asmSql)
+                    ->bindValue(":id_logbook", $row["id"])
                     ->queryAll();
-    
-                $logbook['status'] = $row['_status'];
-                $logbook['score']  = $row['_score'];
-    
+
+                $logbook["status"] = $row["_status"];
+                $logbook["score"] = $row["_score"];
+
                 $data[] = $logbook;
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    
-    public function actionGetNotification() {
-        header('Content-Type: application/json');
+
+    public function actionGetNotification()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
-            echo json_encode(['success' => false, 'message' => 'id_client wajib diisi']);
+        if (!isset($post["id_client"])) {
+            echo json_encode(["success" => false, "message" => "id_client wajib diisi"]);
             Yii::app()->end();
         }
-    
-        if (!isset($post['id_user'])) {
-            echo json_encode(['success' => false, 'message' => 'id_user wajib diisi']);
+
+        if (!isset($post["id_user"])) {
+            echo json_encode(["success" => false, "message" => "id_user wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             $sql = "
                 SELECT
@@ -731,109 +761,113 @@ class ApiMobileServiceController extends Controller {
                   AND tn.deleted_at IS NULL
                 ORDER BY tn.date DESC
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_user', $post['id_user'])
-                ->bindValue(':id_client', $post['id_client'])
+
+            $rows = Yii::app()
+                ->db->createCommand($sql)
+                ->bindValue(":id_user", $post["id_user"])
+                ->bindValue(":id_client", $post["id_client"])
                 ->queryAll();
-    
+
             $data = [];
             foreach ($rows as $row) {
                 $data[] = [
-                    'id'         => $row['id'],
-                    'id_user'    => $row['id_user'],
-                    'id_client'  => $row['id_client'],
-                    'type'       => $row['type'],
-                    'message'    => $row['message'],
-                    'url'        => $row['url'],
-                    'read'       => $row['read'],
-                    'date'       => $row['date'],
-                    'deleted_at' => $row['deleted_at'],
-                    'm_user'     => [
-                        'id'           => $row['_mu_id'],
-                        'display_name' => $row['_mu_display_name'],
-                        'username'     => $row['_mu_username'],
+                    "id" => $row["id"],
+                    "id_user" => $row["id_user"],
+                    "id_client" => $row["id_client"],
+                    "type" => $row["type"],
+                    "message" => $row["message"],
+                    "url" => $row["url"],
+                    "read" => $row["read"],
+                    "date" => $row["date"],
+                    "deleted_at" => $row["deleted_at"],
+                    "m_user" => [
+                        "id" => $row["_mu_id"],
+                        "display_name" => $row["_mu_display_name"],
+                        "username" => $row["_mu_username"],
                     ],
                 ];
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    public function actionReadNotification() {
-        header('Content-Type: application/json');
+
+    public function actionReadNotification()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id'])) {
-            echo json_encode(['success' => false, 'message' => 'id wajib diisi']);
+        if (!isset($post["id"])) {
+            echo json_encode(["success" => false, "message" => "id wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             // Cek notif ada atau tidak
-            $cek = Yii::app()->db->createCommand()
-                ->select('id, read')
-                ->from('t_notif')
-                ->where('id = :id AND deleted_at IS NULL', [':id' => $post['id']])
+            $cek = Yii::app()
+                ->db->createCommand()
+                ->select("id, read")
+                ->from("t_notif")
+                ->where("id = :id AND deleted_at IS NULL", [":id" => $post["id"]])
                 ->queryRow();
-    
+
             if (!$cek) {
-                echo json_encode(['success' => false, 'message' => 'Notifikasi tidak ditemukan']);
+                echo json_encode(["success" => false, "message" => "Notifikasi tidak ditemukan"]);
                 Yii::app()->end();
             }
-    
+
             // Update read menjadi true
             $sql = "UPDATE t_notif SET read = true WHERE id = :id";
-            Yii::app()->db->createCommand($sql)->execute([':id' => $post['id']]);
-    
+            Yii::app()
+                ->db->createCommand($sql)
+                ->execute([":id" => $post["id"]]);
+
             echo json_encode([
-                'success' => true,
-                'message' => 'Notifikasi berhasil ditandai sudah dibaca',
+                "success" => true,
+                "message" => "Notifikasi berhasil ditandai sudah dibaca",
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    // todo list 
-    
-    public function actionGetTodo() {
-        header('Content-Type: application/json');
+
+    // todo list
+
+    public function actionGetTodo()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
-            echo json_encode(['success' => false, 'message' => 'id_client wajib diisi']);
+        if (!isset($post["id_client"])) {
+            echo json_encode(["success" => false, "message" => "id_client wajib diisi"]);
             Yii::app()->end();
         }
-    
-        if (!isset($post['id_user'])) {
-            echo json_encode(['success' => false, 'message' => 'id_user wajib diisi']);
+
+        if (!isset($post["id_user"])) {
+            echo json_encode(["success" => false, "message" => "id_user wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             $sql = "
                 WITH status_logbooks AS (
@@ -880,70 +914,74 @@ class ApiMobileServiceController extends Controller {
                 SELECT * FROM filtered_logbooks
                 ORDER BY date DESC
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_user', $post['id_user'])
-                ->bindValue(':id_client', $post['id_client'])
+
+            $rows = Yii::app()
+                ->db->createCommand($sql)
+                ->bindValue(":id_user", $post["id_user"])
+                ->bindValue(":id_client", $post["id_client"])
                 ->queryAll();
-    
+
             $data = [];
             foreach ($rows as $row) {
                 $data[] = [
-                    'id'          => $row['id'],
-                    'id_action'   => $row['id_action'],
-                    'id_user'     => $row['id_user'],
-                    'id_hospital' => $row['id_hospital'],
-                    'date'        => $row['date'],
-                    'id_category' => $row['id_category'],
-                    'id_client'   => $row['id_client'],
-                    'verified'   => $row['verified'],
-                    'm_action'    => [
-                        'name' => $row['m_action_name'],
+                    "id" => $row["id"],
+                    "id_action" => $row["id_action"],
+                    "id_user" => $row["id_user"],
+                    "id_hospital" => $row["id_hospital"],
+                    "date" => $row["date"],
+                    "id_category" => $row["id_category"],
+                    "id_client" => $row["id_client"],
+                    "verified" => $row["verified"],
+                    "m_action" => [
+                        "name" => $row["m_action_name"],
                     ],
-                    'm_user'      => [
-                        'display_name' => $row['m_user_display_name'],
+                    "m_user" => [
+                        "display_name" => $row["m_user_display_name"],
                     ],
-                    'm_semester'  => $row['semester_id'] ? [
-                        'id'      => $row['semester_id'],
-                        'name'    => $row['semester_name'],
-                        'id_stage' => $row['id_stage'],
-                        'm_stage' => $row['stage_id'] ? [
-                            'id'          => $row['stage_id'],
-                            'name'        => $row['stage_name'],
-                            'label_color' => $row['stage_label_color'],
-                        ] : null,
-                    ] : null,
+                    "m_semester" => $row["semester_id"]
+                        ? [
+                            "id" => $row["semester_id"],
+                            "name" => $row["semester_name"],
+                            "id_stage" => $row["id_stage"],
+                            "m_stage" => $row["stage_id"]
+                                ? [
+                                    "id" => $row["stage_id"],
+                                    "name" => $row["stage_name"],
+                                    "label_color" => $row["stage_label_color"],
+                                ]
+                                : null,
+                        ]
+                        : null,
                 ];
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    
-    public function actionGetLogbookById() {
-        header('Content-Type: application/json');
+
+    public function actionGetLogbookById()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id'])) {
-            echo json_encode(['success' => false, 'message' => 'id wajib diisi']);
+        if (!isset($post["id"])) {
+            echo json_encode(["success" => false, "message" => "id wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             $sql = "
                 SELECT
@@ -979,80 +1017,111 @@ class ApiMobileServiceController extends Controller {
                 LEFT JOIN m_hospital mh ON lb.id_hospital = mh.id
                 WHERE lb.id = :id
             ";
-    
-            $row = Yii::app()->dbPrasi->createCommand($sql)
-                ->bindValue(':id', $post['id'])
-                ->queryRow();
-    
+
+            $row = Yii::app()->dbPrasi->createCommand($sql)->bindValue(":id", $post["id"])->queryRow();
+
             if (!$row) {
-                echo json_encode(['success' => false, 'message' => 'Logbook tidak ditemukan']);
+                echo json_encode(["success" => false, "message" => "Logbook tidak ditemukan"]);
                 Yii::app()->end();
             }
-    
+
             // Field utama lb.*
             $excludeKeys = [
-                '_u_id', '_u_display_name', '_u_username', '_s_name', '_st_label_color',
-                '_ma_id', '_ma_id_type', '_ma_name', '_ma_id_client', '_mac_id', '_mac_name',
-                '_mh_id', '_mh_name', '_mat_name',
-                'has_notes', 'has_attachment', 'has_category', 'is_milestone', 'show_on_milestone',
-                'multiple_verification', 'has_score', 'has_presentation', 'has_location',
-                'has_emr', 'has_another_role', 'has_title', 'has_status', 'show_on_menu',
-                'has_hospital', 'attachment_name', 'has_score_option', 'is_schedule',
-                'max_entry_per_day', 'identifier', 'is_grouped_by_category', 'has_operation_code', 'is_exam'
+                "_u_id",
+                "_u_display_name",
+                "_u_username",
+                "_s_name",
+                "_st_label_color",
+                "_ma_id",
+                "_ma_id_type",
+                "_ma_name",
+                "_ma_id_client",
+                "_mac_id",
+                "_mac_name",
+                "_mh_id",
+                "_mh_name",
+                "_mat_name",
+                "has_notes",
+                "has_attachment",
+                "has_category",
+                "is_milestone",
+                "show_on_milestone",
+                "multiple_verification",
+                "has_score",
+                "has_presentation",
+                "has_location",
+                "has_emr",
+                "has_another_role",
+                "has_title",
+                "has_status",
+                "show_on_menu",
+                "has_hospital",
+                "attachment_name",
+                "has_score_option",
+                "is_schedule",
+                "max_entry_per_day",
+                "identifier",
+                "is_grouped_by_category",
+                "has_operation_code",
+                "is_exam",
             ];
-    
+
             $data = [];
             foreach ($row as $key => $value) {
                 if (!in_array($key, $excludeKeys)) {
                     $data[$key] = $value;
                 }
             }
-    
+
             // Nested m_user
-            $data['m_user'] = [
-                'id'           => $row['_u_id'],
-                'display_name' => $row['_u_display_name'],
-                'username'     => $row['_u_username'],
-                'm_semester'   => $row['_s_name'] ? [
-                    'name'    => $row['_s_name'],
-                    'm_stage' => $row['_st_label_color'] ? [
-                        'label_color' => $row['_st_label_color'],
-                    ] : null,
-                ] : null,
+            $data["m_user"] = [
+                "id" => $row["_u_id"],
+                "display_name" => $row["_u_display_name"],
+                "username" => $row["_u_username"],
+                "m_semester" => $row["_s_name"]
+                    ? [
+                        "name" => $row["_s_name"],
+                        "m_stage" => $row["_st_label_color"]
+                            ? [
+                                "label_color" => $row["_st_label_color"],
+                            ]
+                            : null,
+                    ]
+                    : null,
             ];
-    
+
             // Nested m_action
-            $data['m_action'] = [
-                'id'                     => $row['_ma_id'],
-                'id_type'                => $row['_ma_id_type'],
-                'name'                   => $row['_ma_name'],
-                'action_type_name'       => $row['_mat_name'],
-                'has_notes'              => $row['has_notes'],
-                'has_attachment'         => $row['has_attachment'],
-                'has_category'           => $row['has_category'],
-                'is_milestone'           => $row['is_milestone'],
-                'show_on_milestone'      => $row['show_on_milestone'],
-                'multiple_verification'  => $row['multiple_verification'],
-                'has_score'              => $row['has_score'],
-                'has_presentation'       => $row['has_presentation'],
-                'has_location'           => $row['has_location'],
-                'has_emr'                => $row['has_emr'],
-                'has_another_role'       => $row['has_another_role'],
-                'has_title'              => $row['has_title'],
-                'id_client'              => $row['_ma_id_client'],
-                'has_status'             => $row['has_status'],
-                'show_on_menu'           => $row['show_on_menu'],
-                'has_hospital'           => $row['has_hospital'],
-                'attachment_name'        => json_decode($row['attachment_name'], true) ?? [],
-                'has_score_option'       => $row['has_score_option'],
-                'is_schedule'            => $row['is_schedule'],
-                'max_entry_per_day'      => $row['max_entry_per_day'],
-                'identifier'             => $row['identifier'],
-                'is_grouped_by_category' => $row['is_grouped_by_category'],
-                'has_operation_code'     => $row['has_operation_code'],
-                'is_exam'                => $row['is_exam'],
+            $data["m_action"] = [
+                "id" => $row["_ma_id"],
+                "id_type" => $row["_ma_id_type"],
+                "name" => $row["_ma_name"],
+                "action_type_name" => $row["_mat_name"],
+                "has_notes" => $row["has_notes"],
+                "has_attachment" => $row["has_attachment"],
+                "has_category" => $row["has_category"],
+                "is_milestone" => $row["is_milestone"],
+                "show_on_milestone" => $row["show_on_milestone"],
+                "multiple_verification" => $row["multiple_verification"],
+                "has_score" => $row["has_score"],
+                "has_presentation" => $row["has_presentation"],
+                "has_location" => $row["has_location"],
+                "has_emr" => $row["has_emr"],
+                "has_another_role" => $row["has_another_role"],
+                "has_title" => $row["has_title"],
+                "id_client" => $row["_ma_id_client"],
+                "has_status" => $row["has_status"],
+                "show_on_menu" => $row["show_on_menu"],
+                "has_hospital" => $row["has_hospital"],
+                "attachment_name" => json_decode($row["attachment_name"], true) ?? [],
+                "has_score_option" => $row["has_score_option"],
+                "is_schedule" => $row["is_schedule"],
+                "max_entry_per_day" => $row["max_entry_per_day"],
+                "identifier" => $row["identifier"],
+                "is_grouped_by_category" => $row["is_grouped_by_category"],
+                "has_operation_code" => $row["has_operation_code"],
+                "is_exam" => $row["is_exam"],
             ];
-    
+
             // t_logbook_status
             $statusSql = "
                 SELECT
@@ -1065,60 +1134,72 @@ class ApiMobileServiceController extends Controller {
                 LEFT JOIN m_user lbsu ON lbs.id_user = lbsu.id
                 WHERE lbs.id_logbook = :id_logbook
             ";
-            $statusRows = Yii::app()->dbPrasi->createCommand($statusSql)
-                ->bindValue(':id_logbook', $post['id'])
+            $statusRows = Yii::app()
+                ->dbPrasi->createCommand($statusSql)
+                ->bindValue(":id_logbook", $post["id"])
                 ->queryAll();
-    
-            $data['t_logbook_status'] = [];
+
+            $data["t_logbook_status"] = [];
             foreach ($statusRows as $s) {
                 $status = [];
                 foreach ($s as $key => $value) {
-                    if (strpos($key, '_') !== 0) {
+                    if (strpos($key, "_") !== 0) {
                         $status[$key] = $value;
                     }
                 }
-                $status['m_action_role'] = $s['_ar_id'] ? [
-                    'id'   => $s['_ar_id'],
-                    'role' => $s['_ar_role'],
-                ] : null;
-                $status['m_user'] = $s['_lbsu_id'] ? [
-                    'id'           => $s['_lbsu_id'],
-                    'id_role'      => $s['_lbsu_id_role'],
-                    'display_name' => $s['_lbsu_display_name'],
-                ] : null;
-                $data['t_logbook_status'][] = $status;
+                $status["m_action_role"] = $s["_ar_id"]
+                    ? [
+                        "id" => $s["_ar_id"],
+                        "role" => $s["_ar_role"],
+                    ]
+                    : null;
+                $status["m_user"] = $s["_lbsu_id"]
+                    ? [
+                        "id" => $s["_lbsu_id"],
+                        "id_role" => $s["_lbsu_id_role"],
+                        "display_name" => $s["_lbsu_display_name"],
+                    ]
+                    : null;
+                $data["t_logbook_status"][] = $status;
             }
-    
+
             // t_logbook_emr
             $emrSql = "SELECT * FROM t_logbook_emr WHERE id_logbook = :id_logbook";
-            $data['t_logbook_emr'] = Yii::app()->dbPrasi->createCommand($emrSql)
-                ->bindValue(':id_logbook', $post['id'])
+            $data["t_logbook_emr"] = Yii::app()
+                ->dbPrasi->createCommand($emrSql)
+                ->bindValue(":id_logbook", $post["id"])
                 ->queryAll();
-    
+
             // t_logbook_asm
             $asmSql = "SELECT * FROM t_logbook_asm WHERE id_logbook = :id_logbook";
-            $data['t_logbook_asm'] = Yii::app()->dbPrasi->createCommand($asmSql)
-                ->bindValue(':id_logbook', $post['id'])
+            $data["t_logbook_asm"] = Yii::app()
+                ->dbPrasi->createCommand($asmSql)
+                ->bindValue(":id_logbook", $post["id"])
                 ->queryAll();
-    
+
             // t_logbook_attachment
             $attachSql = "SELECT * FROM t_logbook_attachment WHERE id_logbook = :id_logbook";
-            $data['t_logbook_attachment'] = Yii::app()->dbPrasi->createCommand($attachSql)
-                ->bindValue(':id_logbook', $post['id'])
+            $data["t_logbook_attachment"] = Yii::app()
+                ->dbPrasi->createCommand($attachSql)
+                ->bindValue(":id_logbook", $post["id"])
                 ->queryAll();
-    
+
             // m_action_category
-            $data['m_action_category'] = $row['_mac_id'] ? [
-                'id'   => $row['_mac_id'],
-                'name' => $row['_mac_name'],
-            ] : null;
-    
+            $data["m_action_category"] = $row["_mac_id"]
+                ? [
+                    "id" => $row["_mac_id"],
+                    "name" => $row["_mac_name"],
+                ]
+                : null;
+
             // m_hospital
-            $data['m_hospital'] = $row['_mh_id'] ? [
-                'id'   => $row['_mh_id'],
-                'name' => $row['_mh_name'],
-            ] : null;
-    
+            $data["m_hospital"] = $row["_mh_id"]
+                ? [
+                    "id" => $row["_mh_id"],
+                    "name" => $row["_mh_name"],
+                ]
+                : null;
+
             // m_another_role - filter by id_another_role dari logbook
             $anotherRoleSql = "
                 SELECT
@@ -1132,563 +1213,442 @@ class ApiMobileServiceController extends Controller {
                 WHERE maar.id_action = :id_action
                   AND maar.id_another_role = :id_another_role
             ";
-            $anotherRoles = Yii::app()->dbPrasi->createCommand($anotherRoleSql)
-                ->bindValue(':id_action', $row['_ma_id'])
-                ->bindValue(':id_another_role', $row['id_another_role'])
+            $anotherRoles = Yii::app()
+                ->dbPrasi->createCommand($anotherRoleSql)
+                ->bindValue(":id_action", $row["_ma_id"])
+                ->bindValue(":id_another_role", $row["id_another_role"])
                 ->queryAll();
-    
+
             $anotherRoleData = [];
             foreach ($anotherRoles as $ar) {
                 $item = [];
                 foreach ($ar as $key => $value) {
-                    if (strpos($key, '_') !== 0) {
+                    if (strpos($key, "_") !== 0) {
                         $item[$key] = $value;
                     }
                 }
-                $item['m_another_role'] = $ar['_mar_id'] ? [
-                    'id'        => $ar['_mar_id'],
-                    'role_name' => $ar['_mar_role_name'],
-                    'id_client' => $ar['_mar_id_client'],
-                    'id_action' => $ar['_mar_id_action'],
-                ] : null;
+                $item["m_another_role"] = $ar["_mar_id"]
+                    ? [
+                        "id" => $ar["_mar_id"],
+                        "role_name" => $ar["_mar_role_name"],
+                        "id_client" => $ar["_mar_id_client"],
+                        "id_action" => $ar["_mar_id_action"],
+                    ]
+                    : null;
                 $anotherRoleData[] = $item;
             }
-    
-            $data['m_another_role'] = [
-                'm_action_another_role' => $anotherRoleData,
+
+            $data["m_another_role"] = [
+                "m_action_another_role" => $anotherRoleData,
             ];
-    
+
             echo json_encode([
-                'success' => true,
-                'data'    => $data
+                "success" => true,
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    
-    public function actionUpdateLogbookStatus() {
-        header('Content-Type: application/json');
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-    
-        // Validasi wajib
-        if (!isset($post['id_logbook'])) {
-            echo json_encode(['success' => false, 'message' => 'id_logbook wajib diisi']);
-            Yii::app()->end();
-        }
-    
-        if (!isset($post['id_user'])) {
-            echo json_encode(['success' => false, 'message' => 'id_user wajib diisi']);
-            Yii::app()->end();
-        }
-    
-        if (!isset($post['status'])) {
-            echo json_encode(['success' => false, 'message' => 'status wajib diisi']);
-            Yii::app()->end();
-        }
-    
-        $allowedStatus = ['verified', 'revised', 'rejected'];
-        if (!in_array($post['status'], $allowedStatus)) {
-            echo json_encode(['success' => false, 'message' => 'Status tidak valid. Pilih: verified, revised, rejected']);
-            Yii::app()->end();
-        }
-    
-        try {
-            // Cek logbook ada atau tidak
-            $logbook = Yii::app()->db->createCommand()
-                ->select('id, verified, verified_status')
-                ->from('t_logbook')
-                ->where('id = :id AND deleted_at IS NULL', [':id' => $post['id_logbook']])
-                ->queryRow();
-    
-            if (!$logbook) {
-                echo json_encode(['success' => false, 'message' => 'Logbook tidak ditemukan']);
-                Yii::app()->end();
-            }
-    
-            $status   = $post['status'];
-            $notes    = isset($post['notes']) ? $post['notes'] : null;
-            $dateTime = date('Y-m-d H:i:s');
-    
-            // Tentukan nilai verified berdasarkan status
-            if ($status === 'verified') {
-                $verified        = true;
-                $verified_status = 'verified';
-            } elseif ($status === 'revised') {
-                $verified        = false;
-                $verified_status = 'revised';
-            } else {
-                // rejected
-                $verified        = false;
-                $verified_status = 'rejected';
-            }
-    
-            // Update t_logbook
-            $updateLogbookSql = "
-                UPDATE t_logbook 
-                SET verified = :verified, verified_status = :verified_status
-                WHERE id = :id
-            ";
-            Yii::app()->db->createCommand($updateLogbookSql)->execute([
-                ':verified'        => $verified ? 'true' : 'false',
-                ':verified_status' => $verified_status,
-                ':id'              => $post['id_logbook'],
-            ]);
-    
-            // Cek apakah t_logbook_status sudah ada untuk user ini
-            $existingStatus = Yii::app()->db->createCommand()
-                ->select('id')
-                ->from('t_logbook_status')
-                ->where('id_logbook = :id_logbook AND id_user = :id_user AND deleted_at IS NULL', [
-                    ':id_logbook' => $post['id_logbook'],
-                    ':id_user'    => $post['id_user'],
-                ])
-                ->queryRow();
-    
-            if ($existingStatus) {
-                // notes hanya diupdate jika status rejected
-                if ($status === 'rejected') {
-                    $updateStatusSql = "
-                        UPDATE t_logbook_status
-                        SET status = :status, date_time = :date_time, notes = :notes
-                        WHERE id = :id
-                    ";
-                    Yii::app()->db->createCommand($updateStatusSql)->execute([
-                        ':status'    => $status,
-                        ':date_time' => $dateTime,
-                        ':notes'     => $notes,
-                        ':id'        => $existingStatus['id'],
-                    ]);
-                } else {
-                    // verified / revised - notes tidak diupdate
-                    $updateStatusSql = "
-                        UPDATE t_logbook_status
-                        SET status = :status, date_time = :date_time
-                        WHERE id = :id
-                    ";
-                    Yii::app()->db->createCommand($updateStatusSql)->execute([
-                        ':status'    => $status,
-                        ':date_time' => $dateTime,
-                        ':id'        => $existingStatus['id'],
-                    ]);
-                }
-            } else {
-                // Insert t_logbook_status baru
-                $insertStatusSql = "
-                    INSERT INTO t_logbook_status (id_logbook, id_user, id_action_role, status, date_time, notes, id_client)
-                    VALUES (:id_logbook, :id_user, :id_action_role, :status, :date_time, :notes, :id_client)
-                ";
-                Yii::app()->db->createCommand($insertStatusSql)->execute([
-                    ':id_logbook'     => $post['id_logbook'],
-                    ':id_user'        => $post['id_user'],
-                    ':id_action_role' => isset($post['id_action_role']) ? $post['id_action_role'] : null,
-                    ':status'         => $status,
-                    ':date_time'      => $dateTime,
-                    ':notes'          => $status === 'rejected' ? $notes : null,
-                    ':id_client'      => isset($post['id_client']) ? $post['id_client'] : null,
-                ]);
-            }
-    
-            echo json_encode([
-                'success' => true,
-                'message' => 'Status logbook berhasil diupdate',
-                'data'    => [
-                    'id_logbook'      => $post['id_logbook'],
-                    'verified'        => $verified,
-                    'verified_status' => $verified_status,
-                    'status'          => $status,
-                    'date_time'       => $dateTime,
-                    'notes'           => $notes,
-                ]
-            ]);
-    
-        } catch (Exception $e) {
-            echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
-            ]);
-        }
-    
-        Yii::app()->end();
-    }
-    
-    
+
     // ===========================================================================================================================================================
     // ====================================================================== Stase Section ======================================================================
     // ===========================================================================================================================================================
-    
+
     // /////////////////////////////
     // get master data stase select
     // /////////////////////////////
-    public function actionGetMasterStase() {
-        header('Content-Type: application/json');
+    public function actionGetMasterStase()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
-        if (!isset($post['id_client'])) {
+
+        if (!isset($post["id_client"])) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_client wajib diisi'
+                "success" => false,
+                "message" => "id_client wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
+
         try {
-            $data = Yii::app()->db->createCommand()
-                ->select('id, name, id_client')
-                ->from('m_stase')
-                ->where('id_client = :id_client', [
-                    ':id_client' => $post['id_client']
+            $data = Yii::app()
+                ->db->createCommand()
+                ->select("id, name, id_client")
+                ->from("m_stase")
+                ->where("id_client = :id_client", [
+                    ":id_client" => $post["id_client"],
                 ])
-                ->order('name ASC')
+                ->order("name ASC")
                 ->queryAll();
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
+
     // /////////////////////////////
     // create stase logbook
     // /////////////////////////////
-    public function actionCreateLogbookMilestone() {
-        header('Content-Type: application/json');
+    public function actionCreateLogbookMilestone()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi input wajib
-        if (!isset($post['id_action']) || !isset($post['id_client']) || !isset($post['created_by']) || !isset($post['date'])) {
+        if (
+            !isset($post["id_action"]) ||
+            !isset($post["id_client"]) ||
+            !isset($post["created_by"]) ||
+            !isset($post["date"])
+        ) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_action, id_client, created_by, dan date wajib diisi'
+                "success" => false,
+                "message" => "id_action, id_client, created_by, dan date wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
+
         try {
             // Ambil data m_action
-            $m_action = Yii::app()->db->createCommand()
-                ->select('*')
-                ->from('m_action')
-                ->where('id = :id', [':id' => $post['id_action']])
+            $m_action = Yii::app()
+                ->db->createCommand()
+                ->select("*")
+                ->from("m_action")
+                ->where("id = :id", [":id" => $post["id_action"]])
                 ->queryRow();
-    
+
             if (!$m_action) {
                 echo json_encode([
-                    'success' => false,
-                    'message' => 'Action tidak ditemukan'
+                    "success" => false,
+                    "message" => "Action tidak ditemukan",
                 ]);
                 Yii::app()->end();
             }
-    
+
             // Ambil data user yang login (created_by)
-            $loginUser = Yii::app()->db->createCommand()
-                ->select('u.id, u.id_semester, u.id_stase, u.id_client, r.name as role_name')
-                ->from('m_user u')
-                ->leftJoin('m_role r', 'r.id = u.id_role')
-                ->where('u.id = :id', [':id' => $post['created_by']])
+            $loginUser = Yii::app()
+                ->db->createCommand()
+                ->select("u.id, u.id_semester, u.id_stase, u.id_client, r.name as role_name")
+                ->from("m_user u")
+                ->leftJoin("m_role r", "r.id = u.id_role")
+                ->where("u.id = :id", [":id" => $post["created_by"]])
                 ->queryRow();
-    
+
             if (!$loginUser) {
                 echo json_encode([
-                    'success' => false,
-                    'message' => 'User login tidak ditemukan'
+                    "success" => false,
+                    "message" => "User login tidak ditemukan",
                 ]);
                 Yii::app()->end();
             }
-    
+
             // Validasi berdasarkan role
-            $role = $loginUser['role_name'];
-            if ($role === 'ppds') {
+            $role = $loginUser["role_name"];
+            if ($role === "ppds") {
                 // ppds wajib ada t_logbook_status
-            } else if ($role === 'staff' || $role === 'institution') {
+            } elseif ($role === "staff" || $role === "institution") {
                 // staff/institution wajib ada id_user (PPDS)
-                if (!isset($post['id_user'])) {
+                if (!isset($post["id_user"])) {
                     echo json_encode([
-                        'success' => false,
-                        'message' => 'PPDS wajib diisi'
+                        "success" => false,
+                        "message" => "PPDS wajib diisi",
                     ]);
                     Yii::app()->end();
                 }
             }
-    
+
             // Inisialisasi variable
-            $id_user         = $post['created_by'];
-            $id_semester     = null;
-            $id_stase        = null;
-            $verified        = isset($post['verified']) ? (bool)$post['verified'] : false;
-            $verified_status = isset($post['verified_status']) ? $post['verified_status'] : 'pending';
-            $op_code         = null;
-    
+            $id_user = $post["created_by"];
+            $id_semester = null;
+            $id_stase = null;
+            $verified = isset($post["verified"]) ? (bool) $post["verified"] : false;
+            $verified_status = isset($post["verified_status"]) ? $post["verified_status"] : "pending";
+            $op_code = null;
+
             // Generate operation code jika diperlukan
-            if ($m_action['has_operation_code'] && !isset($post['operation_code'])) {
-                $op_code = 'LB' . date('YmdHi');
+            if ($m_action["has_operation_code"] && !isset($post["operation_code"])) {
+                $op_code = "LB" . date("YmdHi");
             }
-    
+
             // Cek is_exam atau is_milestone && role staff
-            if ($m_action['is_exam'] || ($m_action['is_milestone'] && $role === 'staff')) {
-    
+            if ($m_action["is_exam"] || ($m_action["is_milestone"] && $role === "staff")) {
                 // Wajib ada id_user & id_stase
-                if (!isset($post['id_user'])) {
+                if (!isset($post["id_user"])) {
                     echo json_encode([
-                        'success' => false,
-                        'message' => 'id_user PPDS wajib diisi'
+                        "success" => false,
+                        "message" => "id_user PPDS wajib diisi",
                     ]);
                     Yii::app()->end();
                 }
-    
+
                 // Step 1: Update id_stase di m_user PPDS dulu
-                if (isset($post['id_stase'])) {
-                    Yii::app()->db->createCommand()->update(
-                        'm_user',
-                        ['id_stase' => $post['id_stase']],
-                        'id = :id AND id_client = :id_client',
-                        [
-                            ':id'        => $post['id_user'],
-                            ':id_client' => $post['id_client']
-                        ]
-                    );
+                if (isset($post["id_stase"])) {
+                    Yii::app()
+                        ->db->createCommand()
+                        ->update("m_user", ["id_stase" => $post["id_stase"]], "id = :id AND id_client = :id_client", [
+                            ":id" => $post["id_user"],
+                            ":id_client" => $post["id_client"],
+                        ]);
                 }
-    
+
                 // Step 2: Ambil id_semester & id_stase terbaru dari m_user PPDS
-                $ppds = Yii::app()->db->createCommand()
-                    ->select('id, id_semester, id_stase')
-                    ->from('m_user')
-                    ->where('id = :id AND id_client = :id_client', [
-                        ':id'        => $post['id_user'],
-                        ':id_client' => $post['id_client']
+                $ppds = Yii::app()
+                    ->db->createCommand()
+                    ->select("id, id_semester, id_stase")
+                    ->from("m_user")
+                    ->where("id = :id AND id_client = :id_client", [
+                        ":id" => $post["id_user"],
+                        ":id_client" => $post["id_client"],
                     ])
                     ->queryRow();
-    
+
                 if (!$ppds) {
                     echo json_encode([
-                        'success' => false,
-                        'message' => 'User PPDS tidak ditemukan'
+                        "success" => false,
+                        "message" => "User PPDS tidak ditemukan",
                     ]);
                     Yii::app()->end();
                 }
-    
-                $id_user         = $ppds['id'];
-                $id_semester     = $ppds['id_semester'];
-                $id_stase        = $ppds['id_stase'];
-                $verified        = true;
-                $verified_status = 'verified';
-    
+
+                $id_user = $ppds["id"];
+                $id_semester = $ppds["id_semester"];
+                $id_stase = $ppds["id_stase"];
+                $verified = true;
+                $verified_status = "verified";
             } else {
                 // Ambil id_semester & id_stase dari user yang LOGIN
-                $res = Yii::app()->db->createCommand()
-                    ->select('id, id_semester, id_stase')
-                    ->from('m_user')
-                    ->where('id = :id AND id_client = :id_client', [
-                        ':id'        => $post['created_by'],
-                        ':id_client' => $post['id_client']
+                $res = Yii::app()
+                    ->db->createCommand()
+                    ->select("id, id_semester, id_stase")
+                    ->from("m_user")
+                    ->where("id = :id AND id_client = :id_client", [
+                        ":id" => $post["created_by"],
+                        ":id_client" => $post["id_client"],
                     ])
                     ->queryRow();
-    
-                $id_user     = $res['id'];
-                $id_semester = $res['id_semester'];
-                $id_stase    = $res['id_stase'];
+
+                $id_user = $res["id"];
+                $id_semester = $res["id_semester"];
+                $id_stase = $res["id_stase"];
             }
-    
+
             // Siapkan nilai SQL
-            $notes        = isset($post['notes']) && $post['notes'] !== '' ? "'" . addslashes($post['notes']) . "'" : 'NULL';
-            $exam_result  = isset($post['exam_result']) && $post['exam_result'] !== '' ? "'" . addslashes($post['exam_result']) . "'" : 'NULL';
-            $op_code_sql  = $op_code ? "'" . $op_code . "'" : (isset($post['operation_code']) && $post['operation_code'] !== '' ? "'" . addslashes($post['operation_code']) . "'" : 'NULL');
-            $id_sem_sql   = $id_semester ? $id_semester : 'NULL';
-            $id_sta_sql   = $id_stase ? $id_stase : 'NULL';
-            $is_retake    = isset($post['is_retake']) && $post['is_retake'] ? 'true' : 'false';
-            $verified_sql = $verified ? 'true' : 'false';
-            $schedule     = isset($post['schedule_status']) && $post['schedule_status'] !== '' ? $post['schedule_status'] : 'pending';
-            $date_now     = date('Y-m-d H:i:s');
-    
+            $notes = isset($post["notes"]) && $post["notes"] !== "" ? "'" . addslashes($post["notes"]) . "'" : "NULL";
+            $exam_result =
+                isset($post["exam_result"]) && $post["exam_result"] !== ""
+                    ? "'" . addslashes($post["exam_result"]) . "'"
+                    : "NULL";
+            $op_code_sql = $op_code
+                ? "'" . $op_code . "'"
+                : (isset($post["operation_code"]) && $post["operation_code"] !== ""
+                    ? "'" . addslashes($post["operation_code"]) . "'"
+                    : "NULL");
+            $id_sem_sql = $id_semester ? $id_semester : "NULL";
+            $id_sta_sql = $id_stase ? $id_stase : "NULL";
+            $is_retake = isset($post["is_retake"]) && $post["is_retake"] ? "true" : "false";
+            $verified_sql = $verified ? "true" : "false";
+            $schedule =
+                isset($post["schedule_status"]) && $post["schedule_status"] !== ""
+                    ? $post["schedule_status"]
+                    : "pending";
+            $date_now = date("Y-m-d H:i:s");
+
             // Cek apakah create atau update
-            if (!isset($post['id'])) {
+            if (!isset($post["id"])) {
                 // CREATE
                 $sql = "INSERT INTO t_logbook 
                     (notes, date, id_action, id_user, id_semester, id_stase, id_client, verified, verified_status, created_by, created_date, exam_result, is_retake, schedule_status, operation_code)
                     VALUES 
-                    ({$notes}, '{$post['date']}', {$post['id_action']}, {$id_user}, {$id_sem_sql}, {$id_sta_sql}, {$post['id_client']}, {$verified_sql}, '{$verified_status}', {$post['created_by']}, '{$date_now}',                     {$exam_result}, {$is_retake}, '{$schedule}', {$op_code_sql})
+                    ({$notes}, '{$post["date"]}', {$post["id_action"]}, {$id_user}, {$id_sem_sql}, {$id_sta_sql}, {$post["id_client"]}, {$verified_sql}, '{$verified_status}', {$post["created_by"]}, '{$date_now}',                     {$exam_result}, {$is_retake}, '{$schedule}', {$op_code_sql})
                     RETURNING id";
-    
-                $result     = Yii::app()->db->createCommand($sql)->queryRow();
-                $id_logbook = $result['id'];
-    
+
+                $result = Yii::app()->db->createCommand($sql)->queryRow();
+                $id_logbook = $result["id"];
             } else {
                 // UPDATE
-                $verified_status_update = $verified_status === 'rejected' ? 'revised' : $verified_status;
-    
+                $verified_status_update = $verified_status === "rejected" ? "revised" : $verified_status;
+
                 $sql = "UPDATE t_logbook SET
                     notes         = {$notes},
-                    date          = '{$post['date']}',
-                    id_action     = {$post['id_action']},
+                    date          = '{$post["date"]}',
+                    id_action     = {$post["id_action"]},
                     id_user       = {$id_user},
-                    id_client     = {$post['id_client']},
+                    id_client     = {$post["id_client"]},
                     verified      = {$verified_sql},
                     verified_status = '{$verified_status_update}',
-                    created_by    = {$post['created_by']},
-                    created_date  = '{$post['date']}',
+                    created_by    = {$post["created_by"]},
+                    created_date  = '{$post["date"]}',
                     updated_date  = '{$date_now}',
                     exam_result   = {$exam_result},
                     is_retake     = {$is_retake},
                     schedule_status = '{$schedule}',
                     operation_code = {$op_code_sql}
-                    WHERE id = {$post['id']}";
-    
+                    WHERE id = {$post["id"]}";
+
                 Yii::app()->db->createCommand($sql)->execute();
-                $id_logbook = $post['id'];
+                $id_logbook = $post["id"];
             }
-    
+
             // Insert t_logbook_status jika ada
-            if (isset($post['t_logbook_status']) && is_array($post['t_logbook_status'])) {
-                $logbook_status = array_filter($post['t_logbook_status'], function($e) {
-                    return isset($e['id_user']);
+            if (isset($post["t_logbook_status"]) && is_array($post["t_logbook_status"])) {
+                $logbook_status = array_filter($post["t_logbook_status"], function ($e) {
+                    return isset($e["id_user"]);
                 });
-    
+
                 foreach ($logbook_status as $item) {
                     // Tentukan status
-                    if ($item['status'] === 'rejected') {
-                        $status = 'revised';
-                    } else if ($item['status'] === 'verified') {
-                        $status = 'verified';
-                    } else if ($item['status'] === 'approved') {
-                        $status = 'approved';
-                    } else if ($item['status'] === 'revised') {
-                        $status = 'revised';
+                    if ($item["status"] === "rejected") {
+                        $status = "revised";
+                    } elseif ($item["status"] === "verified") {
+                        $status = "verified";
+                    } elseif ($item["status"] === "approved") {
+                        $status = "approved";
+                    } elseif ($item["status"] === "revised") {
+                        $status = "revised";
                     } else {
-                        $status = 'pending';
+                        $status = "pending";
                     }
-    
-                    $id_action_role = isset($item['id_action_role']) ? $item['id_action_role'] : 'NULL';
-                    $date_time      = date('Y-m-d H:i:s');
-    
+
+                    $id_action_role = isset($item["id_action_role"]) ? $item["id_action_role"] : "NULL";
+                    $date_time = date("Y-m-d H:i:s");
+
                     // Cek existing
-                    $existing = Yii::app()->db->createCommand()
-                        ->select('id')
-                        ->from('t_logbook_status')
-                        ->where('id_logbook = :id_logbook AND id_user = :id_user', [
-                            ':id_logbook' => $id_logbook,
-                            ':id_user'    => $item['id_user']
+                    $existing = Yii::app()
+                        ->db->createCommand()
+                        ->select("id")
+                        ->from("t_logbook_status")
+                        ->where("id_logbook = :id_logbook AND id_user = :id_user", [
+                            ":id_logbook" => $id_logbook,
+                            ":id_user" => $item["id_user"],
                         ])
                         ->queryRow();
-    
+
                     if ($existing) {
                         // Update
-                        Yii::app()->db->createCommand()->update(
-                            't_logbook_status',
-                            [
-                                'status'         => $status,
-                                'id_action_role' => $id_action_role !== 'NULL' ? $id_action_role : null,
-                                'date_time'      => $date_time
-                            ],
-                            'id_logbook = :id_logbook AND id_user = :id_user',
-                            [
-                                ':id_logbook' => $id_logbook,
-                                ':id_user'    => $item['id_user']
-                            ]
-                        );
+                        Yii::app()
+                            ->db->createCommand()
+                            ->update(
+                                "t_logbook_status",
+                                [
+                                    "status" => $status,
+                                    "id_action_role" => $id_action_role !== "NULL" ? $id_action_role : null,
+                                    "date_time" => $date_time,
+                                ],
+                                "id_logbook = :id_logbook AND id_user = :id_user",
+                                [
+                                    ":id_logbook" => $id_logbook,
+                                    ":id_user" => $item["id_user"],
+                                ],
+                            );
                     } else {
                         // Insert
-                        Yii::app()->db->createCommand()->insert('t_logbook_status', [
-                            'id_logbook'     => $id_logbook,
-                            'id_user'        => $item['id_user'],
-                            'id_action_role' => $id_action_role !== 'NULL' ? $id_action_role : null,
-                            'status'         => $status,
-                            'date_time'      => $date_time
-                        ]);
+                        Yii::app()
+                            ->db->createCommand()
+                            ->insert("t_logbook_status", [
+                                "id_logbook" => $id_logbook,
+                                "id_user" => $item["id_user"],
+                                "id_action_role" => $id_action_role !== "NULL" ? $id_action_role : null,
+                                "status" => $status,
+                                "date_time" => $date_time,
+                            ]);
                     }
-    
+
                     // Insert notifikasi
-                    $m_action_name = $m_action['name'];
-                    $date_formatted = date('d/m/Y H:i', strtotime($post['date']));
-                    $message = addslashes("{$loginUser['role_name']} menambahkan data {$m_action_name} pada {$date_formatted}, Mohon berikan verifikasi anda. Klik detail untuk melihat logbook");
-    
+                    $m_action_name = $m_action["name"];
+                    $date_formatted = date("d/m/Y H:i", strtotime($post["date"]));
+                    $message = addslashes(
+                        "{$loginUser["role_name"]} menambahkan data {$m_action_name} pada {$date_formatted}, Mohon berikan verifikasi anda. Klik detail untuk melihat logbook",
+                    );
+
                     // Ambil id_role penerima notif
-                    $notif_user = Yii::app()->db->createCommand()
-                        ->select('id, id_role')
-                        ->from('m_user')
-                        ->where('id = :id', [':id' => $item['id_user']])
+                    $notif_user = Yii::app()
+                        ->db->createCommand()
+                        ->select("id, id_role")
+                        ->from("m_user")
+                        ->where("id = :id", [":id" => $item["id_user"]])
                         ->queryRow();
-    
+
                     if ($notif_user) {
-                        Yii::app()->db->createCommand()->insert('t_notif', [
-                            'message'    => $message,
-                            'date'       => $date_now,
-                            'type'       => 'verify',
-                            'id_user'    => $item['id_user'],
-                            'url'        => '/staff/action/' . $post['id_action'] . '/' . $id_logbook,
-                            'id_role'    => $notif_user['id_role'],
-                            'id_client'  => $post['id_client'],
-                            'id_logbook' => $id_logbook
-                        ]);
+                        Yii::app()
+                            ->db->createCommand()
+                            ->insert("t_notif", [
+                                "message" => $message,
+                                "date" => $date_now,
+                                "type" => "verify",
+                                "id_user" => $item["id_user"],
+                                "url" => "/staff/action/" . $post["id_action"] . "/" . $id_logbook,
+                                "id_role" => $notif_user["id_role"],
+                                "id_client" => $post["id_client"],
+                                "id_logbook" => $id_logbook,
+                            ]);
                     }
                 }
             }
-    
+
             // Ambil data logbook yang baru dibuat/diupdate
-            $logbook = Yii::app()->db->createCommand()
-                ->select('*')
-                ->from('t_logbook')
-                ->where('id = :id', [':id' => $id_logbook])
+            $logbook = Yii::app()
+                ->db->createCommand()
+                ->select("*")
+                ->from("t_logbook")
+                ->where("id = :id", [":id" => $id_logbook])
                 ->queryRow();
-    
+
             echo json_encode([
-                'success' => true,
-                'message' => isset($post['id']) ? 'Logbook berhasil diupdate' : 'Logbook berhasil dibuat',
-                'data'    => $logbook
+                "success" => true,
+                "message" => isset($post["id"]) ? "Logbook berhasil diupdate" : "Logbook berhasil dibuat",
+                "data" => $logbook,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
-    }    
-    
-    
-    public function actionGetMilestoneNotTaken() {
-        header('Content-Type: application/json');
+    }
+
+    public function actionGetMilestoneNotTaken()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
+        if (!isset($post["id_client"])) {
             echo json_encode([
-                'success' => false,
-                'message' => 'id_client wajib diisi'
+                "success" => false,
+                "message" => "id_client wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
-        if (!isset($post['user_id'])) {
+
+        if (!isset($post["user_id"])) {
             echo json_encode([
-                'success' => false,
-                'message' => 'user_id wajib diisi'
+                "success" => false,
+                "message" => "user_id wajib diisi",
             ]);
             Yii::app()->end();
         }
-    
+
         try {
             $sql = "
                 SELECT
@@ -1721,68 +1681,68 @@ class ApiMobileServiceController extends Controller {
                     )
                 ORDER BY s.sequence DESC, s.id_stage DESC
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_client', $post['id_client'])
-                ->bindValue(':user_id', $post['user_id'])
+
+            $rows = Yii::app()
+                ->db->createCommand($sql)
+                ->bindValue(":id_client", $post["id_client"])
+                ->bindValue(":user_id", $post["user_id"])
                 ->queryAll();
-    
+
             // Susun nested structure
             $data = [];
             foreach ($rows as $row) {
                 $data[] = [
-                    'id'        => $row['id'],
-                    'name'      => $row['name'],
-                    'id_stage'  => $row['id_stage'],
-                    'id_client' => $row['id_client'],
-                    'sequence'  => $row['sequence'],
-                    'm_stage'   => [
-                        'id'             => $row['_stage_id'],
-                        'name'           => $row['_stage_name'],
-                        'label_color'    => $row['_stage_label_color'],
-                        'id_institution' => $row['_stage_id_institution'],
-                        'created_date'   => $row['_stage_created_date'],
-                        'created_by'     => $row['_stage_created_by'],
-                        'updated_date'   => $row['_stage_updated_date'],
-                        'updated_by'     => $row['_stage_updated_by'],
-                        'code'           => $row['_stage_code'],
-                        'id_client'      => $row['_stage_id_client'],
+                    "id" => $row["id"],
+                    "name" => $row["name"],
+                    "id_stage" => $row["id_stage"],
+                    "id_client" => $row["id_client"],
+                    "sequence" => $row["sequence"],
+                    "m_stage" => [
+                        "id" => $row["_stage_id"],
+                        "name" => $row["_stage_name"],
+                        "label_color" => $row["_stage_label_color"],
+                        "id_institution" => $row["_stage_id_institution"],
+                        "created_date" => $row["_stage_created_date"],
+                        "created_by" => $row["_stage_created_by"],
+                        "updated_date" => $row["_stage_updated_date"],
+                        "updated_by" => $row["_stage_updated_by"],
+                        "code" => $row["_stage_code"],
+                        "id_client" => $row["_stage_id_client"],
                     ],
                 ];
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    
-    public function actionGetMilestoneTaken() {
-       header('Content-Type: application/json');
+
+    public function actionGetMilestoneTaken()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
-        if (!isset($post['id_client'])) {
-            echo json_encode(['success' => false, 'message' => 'id_client wajib diisi']);
+
+        if (!isset($post["id_client"])) {
+            echo json_encode(["success" => false, "message" => "id_client wajib diisi"]);
             Yii::app()->end();
         }
-    
-        if (!isset($post['user_id'])) {
-            echo json_encode(['success' => false, 'message' => 'user_id wajib diisi']);
+
+        if (!isset($post["user_id"])) {
+            echo json_encode(["success" => false, "message" => "user_id wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             // Query 1: Semua action yang show_on_milestone
             $actionSql = "
@@ -1792,10 +1752,11 @@ class ApiMobileServiceController extends Controller {
                   AND id_client = :id_client
                 ORDER BY name ASC
             ";
-            $actions = Yii::app()->db->createCommand($actionSql)
-                ->bindValue(':id_client', $post['id_client'])
+            $actions = Yii::app()
+                ->db->createCommand($actionSql)
+                ->bindValue(":id_client", $post["id_client"])
                 ->queryAll();
-    
+
             $result = [];
             foreach ($actions as $action) {
                 // Query 2: m_action_semester per action
@@ -1813,26 +1774,27 @@ class ApiMobileServiceController extends Controller {
                     WHERE acts.id_action = :id_action
                     ORDER BY smt.name ASC
                 ";
-                $actionSemesters = Yii::app()->db->createCommand($actionSemesterSql)
-                    ->bindValue(':id_action', $action['id'])
+                $actionSemesters = Yii::app()
+                    ->db->createCommand($actionSemesterSql)
+                    ->bindValue(":id_action", $action["id"])
                     ->queryAll();
-    
+
                 $actionSemesterData = [];
                 foreach ($actionSemesters as $row) {
                     $actionSemesterData[] = [
-                        'id'         => $row['id'],
-                        'm_semester' => [
-                            'id'      => $row['_semester_id'],
-                            'name'    => $row['_semester_name'],
-                            'm_stage' => [
-                                'id'          => $row['_stage_id'],
-                                'name'        => $row['_stage_name'],
-                                'label_color' => $row['_stage_label_color'],
+                        "id" => $row["id"],
+                        "m_semester" => [
+                            "id" => $row["_semester_id"],
+                            "name" => $row["_semester_name"],
+                            "m_stage" => [
+                                "id" => $row["_stage_id"],
+                                "name" => $row["_stage_name"],
+                                "label_color" => $row["_stage_label_color"],
                             ],
                         ],
                     ];
                 }
-    
+
                 // Query 3: t_logbook per action per user
                 $logbookSql = "
                     SELECT
@@ -1853,63 +1815,64 @@ class ApiMobileServiceController extends Controller {
                       AND lb.deleted_at IS NULL
                     ORDER BY lb.created_date DESC
                 ";
-                $logbooks = Yii::app()->db->createCommand($logbookSql)
-                    ->bindValue(':id_action', $action['id'])
-                    ->bindValue(':user_id', $post['user_id'])
+                $logbooks = Yii::app()
+                    ->db->createCommand($logbookSql)
+                    ->bindValue(":id_action", $action["id"])
+                    ->bindValue(":user_id", $post["user_id"])
                     ->queryAll();
-    
+
                 $logbookData = [];
                 foreach ($logbooks as $row) {
                     $logbookData[] = [
-                        'id'         => $row['id'],
-                        'is_retake'  => $row['is_retake'],
-                        'm_semester' => [
-                            'id'   => $row['_semester_id'],
-                            'name' => $row['_semester_name'],
+                        "id" => $row["id"],
+                        "is_retake" => $row["is_retake"],
+                        "m_semester" => [
+                            "id" => $row["_semester_id"],
+                            "name" => $row["_semester_name"],
                         ],
-                        'm_stase'    => [
-                            'id'      => $row['_stase_id'],
-                            'name'    => $row['_stase_name'],
-                            'm_stage' => [
-                                'label_color' => $row['_stage_label_color'],
+                        "m_stase" => [
+                            "id" => $row["_stase_id"],
+                            "name" => $row["_stase_name"],
+                            "m_stage" => [
+                                "label_color" => $row["_stage_label_color"],
                             ],
                         ],
                     ];
                 }
-    
+
                 $result[] = array_merge($action, [
-                    'm_action_semester' => $actionSemesterData,
-                    't_logbook'         => $logbookData,
+                    "m_action_semester" => $actionSemesterData,
+                    "t_logbook" => $logbookData,
                 ]);
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($result),
-                'data'    => $result
+                "success" => true,
+                "total" => count($result),
+                "data" => $result,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    public function actionGetMilestoneStaff() {
-        header('Content-Type: application/json');
+
+    public function actionGetMilestoneStaff()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
-            echo json_encode(['success' => false, 'message' => 'id_client wajib diisi']);
+        if (!isset($post["id_client"])) {
+            echo json_encode(["success" => false, "message" => "id_client wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             // Query utama
             $sql = "
@@ -1968,147 +1931,165 @@ class ApiMobileServiceController extends Controller {
                   AND lb.id_client = :id_client
                 ORDER BY lb.date DESC
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_client', $post['id_client'])
-                ->queryAll();
-    
+
+            $rows = Yii::app()->db->createCommand($sql)->bindValue(":id_client", $post["id_client"])->queryAll();
+
             $data = [];
             foreach ($rows as $row) {
                 // Field utama lb.*
                 $logbook = [];
-                $excludeKeys = ['has_notes', 'has_attachment', 'has_category', 'is_milestone',
-                    'show_on_milestone', 'multiple_verification', 'has_score', 'has_presentation',
-                    'has_location', 'has_emr', 'has_another_role', 'has_title', 'has_status',
-                    'show_on_menu', 'has_hospital', 'attachment_name', 'has_score_option',
-                    'is_schedule', 'max_entry_per_day', 'identifier', 'is_grouped_by_category',
-                    'has_operation_code', 'is_exam'];
-    
+                $excludeKeys = [
+                    "has_notes",
+                    "has_attachment",
+                    "has_category",
+                    "is_milestone",
+                    "show_on_milestone",
+                    "multiple_verification",
+                    "has_score",
+                    "has_presentation",
+                    "has_location",
+                    "has_emr",
+                    "has_another_role",
+                    "has_title",
+                    "has_status",
+                    "show_on_menu",
+                    "has_hospital",
+                    "attachment_name",
+                    "has_score_option",
+                    "is_schedule",
+                    "max_entry_per_day",
+                    "identifier",
+                    "is_grouped_by_category",
+                    "has_operation_code",
+                    "is_exam",
+                ];
+
                 foreach ($row as $key => $value) {
-                    if (strpos($key, '_') !== 0 && !in_array($key, $excludeKeys)) {
+                    if (strpos($key, "_") !== 0 && !in_array($key, $excludeKeys)) {
                         $logbook[$key] = $value;
                     }
                 }
-    
+
                 // Nested m_action
-                $logbook['m_action'] = [
-                    'id'                     => $row['_ma_id'],
-                    'id_type'                => $row['_ma_id_type'],
-                    'name'                   => $row['_ma_name'],
-                    'has_notes'              => $row['has_notes'],
-                    'has_attachment'         => $row['has_attachment'],
-                    'has_category'           => $row['has_category'],
-                    'is_milestone'           => $row['is_milestone'],
-                    'show_on_milestone'      => $row['show_on_milestone'],
-                    'multiple_verification'  => $row['multiple_verification'],
-                    'has_score'              => $row['has_score'],
-                    'has_presentation'       => $row['has_presentation'],
-                    'has_location'           => $row['has_location'],
-                    'has_emr'                => $row['has_emr'],
-                    'has_another_role'       => $row['has_another_role'],
-                    'has_title'              => $row['has_title'],
-                    'id_client'              => $row['_ma_id_client'],
-                    'has_status'             => $row['has_status'],
-                    'show_on_menu'           => $row['show_on_menu'],
-                    'has_hospital'           => $row['has_hospital'],
-                    'attachment_name'        => $row['attachment_name'],
-                    'has_score_option'       => $row['has_score_option'],
-                    'is_schedule'            => $row['is_schedule'],
-                    'max_entry_per_day'      => $row['max_entry_per_day'],
-                    'identifier'             => $row['identifier'],
-                    'is_grouped_by_category' => $row['is_grouped_by_category'],
-                    'has_operation_code'     => $row['has_operation_code'],
-                    'is_exam'                => $row['is_exam'],
+                $logbook["m_action"] = [
+                    "id" => $row["_ma_id"],
+                    "id_type" => $row["_ma_id_type"],
+                    "name" => $row["_ma_name"],
+                    "has_notes" => $row["has_notes"],
+                    "has_attachment" => $row["has_attachment"],
+                    "has_category" => $row["has_category"],
+                    "is_milestone" => $row["is_milestone"],
+                    "show_on_milestone" => $row["show_on_milestone"],
+                    "multiple_verification" => $row["multiple_verification"],
+                    "has_score" => $row["has_score"],
+                    "has_presentation" => $row["has_presentation"],
+                    "has_location" => $row["has_location"],
+                    "has_emr" => $row["has_emr"],
+                    "has_another_role" => $row["has_another_role"],
+                    "has_title" => $row["has_title"],
+                    "id_client" => $row["_ma_id_client"],
+                    "has_status" => $row["has_status"],
+                    "show_on_menu" => $row["show_on_menu"],
+                    "has_hospital" => $row["has_hospital"],
+                    "attachment_name" => $row["attachment_name"],
+                    "has_score_option" => $row["has_score_option"],
+                    "is_schedule" => $row["is_schedule"],
+                    "max_entry_per_day" => $row["max_entry_per_day"],
+                    "identifier" => $row["identifier"],
+                    "is_grouped_by_category" => $row["is_grouped_by_category"],
+                    "has_operation_code" => $row["has_operation_code"],
+                    "is_exam" => $row["is_exam"],
                 ];
-    
+
                 // Nested m_user
-                $logbook['m_user'] = [
-                    'id'               => $row['_mu_id'],
-                    'display_name'     => $row['_mu_display_name'],
-                    'username'         => $row['_mu_username'],
-                    'email'            => $row['_mu_email'],
-                    'password'         => $row['_mu_password'],
-                    'id_role'          => $row['_mu_id_role'],
-                    'is_deleted'       => $row['_mu_is_deleted'],
-                    'created_date'     => $row['_mu_created_date'],
-                    'created_by'       => $row['_mu_created_by'],
-                    'updated_date'     => $row['_mu_updated_date'],
-                    'updated_by'       => $row['_mu_updated_by'],
-                    'phone'            => $row['_mu_phone'],
-                    'address'          => $row['_mu_address'],
-                    'date_of_birth'    => $row['_mu_date_of_birth'],
-                    'code'             => $row['_mu_code'],
-                    'picture'          => $row['_mu_picture'],
-                    'id_institution'   => $row['_mu_id_institution'],
-                    'id_sub_category'  => $row['_mu_id_sub_category'],
-                    'id_semester'      => $row['_mu_id_semester'],
-                    'id_stase'         => $row['_mu_id_stase'],
-                    'id_client'        => $row['_mu_id_client'],
-                    'gender'           => $row['_mu_gender'],
-                    'id_year'          => $row['_mu_id_year'],
-                    'status'           => $row['_mu_status'],
-                    'inisial_code'     => $row['_mu_inisial_code'],
-                    'is_show'          => $row['_mu_is_show'],
-                    'deleted_at'       => $row['_mu_deleted_at'],
-                    'inactive_at'      => $row['_mu_inactive_at'],
-                    'inactive_notes'   => $row['_mu_inactive_notes'],
-                    'reactivate_date'  => $row['_mu_reactivate_date'],
+                $logbook["m_user"] = [
+                    "id" => $row["_mu_id"],
+                    "display_name" => $row["_mu_display_name"],
+                    "username" => $row["_mu_username"],
+                    "email" => $row["_mu_email"],
+                    "password" => $row["_mu_password"],
+                    "id_role" => $row["_mu_id_role"],
+                    "is_deleted" => $row["_mu_is_deleted"],
+                    "created_date" => $row["_mu_created_date"],
+                    "created_by" => $row["_mu_created_by"],
+                    "updated_date" => $row["_mu_updated_date"],
+                    "updated_by" => $row["_mu_updated_by"],
+                    "phone" => $row["_mu_phone"],
+                    "address" => $row["_mu_address"],
+                    "date_of_birth" => $row["_mu_date_of_birth"],
+                    "code" => $row["_mu_code"],
+                    "picture" => $row["_mu_picture"],
+                    "id_institution" => $row["_mu_id_institution"],
+                    "id_sub_category" => $row["_mu_id_sub_category"],
+                    "id_semester" => $row["_mu_id_semester"],
+                    "id_stase" => $row["_mu_id_stase"],
+                    "id_client" => $row["_mu_id_client"],
+                    "gender" => $row["_mu_gender"],
+                    "id_year" => $row["_mu_id_year"],
+                    "status" => $row["_mu_status"],
+                    "inisial_code" => $row["_mu_inisial_code"],
+                    "is_show" => $row["_mu_is_show"],
+                    "deleted_at" => $row["_mu_deleted_at"],
+                    "inactive_at" => $row["_mu_inactive_at"],
+                    "inactive_notes" => $row["_mu_inactive_notes"],
+                    "reactivate_date" => $row["_mu_reactivate_date"],
                 ];
-    
+
                 // Nested m_stase
-                $logbook['m_stase'] = $row['_stase_id'] ? [
-                    'id'        => $row['_stase_id'],
-                    'name'      => $row['_stase_name'],
-                    'id_stage'  => $row['_stase_id_stage'],
-                    'id_client' => $row['_stase_id_client'],
-                    'sequence'  => $row['_stase_sequence'],
-                ] : null;
-    
+                $logbook["m_stase"] = $row["_stase_id"]
+                    ? [
+                        "id" => $row["_stase_id"],
+                        "name" => $row["_stase_name"],
+                        "id_stage" => $row["_stase_id_stage"],
+                        "id_client" => $row["_stase_id_client"],
+                        "sequence" => $row["_stase_sequence"],
+                    ]
+                    : null;
+
                 // Nested m_semester
-                $logbook['m_semester'] = $row['_smt_id'] ? [
-                    'id'        => $row['_smt_id'],
-                    'name'      => $row['_smt_name'],
-                    'id_stage'  => $row['_smt_id_stage'],
-                    'id_client' => $row['_smt_id_client'],
-                ] : null;
-    
+                $logbook["m_semester"] = $row["_smt_id"]
+                    ? [
+                        "id" => $row["_smt_id"],
+                        "name" => $row["_smt_name"],
+                        "id_stage" => $row["_smt_id_stage"],
+                        "id_client" => $row["_smt_id_client"],
+                    ]
+                    : null;
+
                 $data[] = $logbook;
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    
+
     // ===========================================================================================================================================================
     // ====================================================================== Explore Section ======================================================================
     // ===========================================================================================================================================================
-    
-    
-    
-    public function actionGetListExplorePpds() {
-        header('Content-Type: application/json');
+
+    public function actionGetListExplorePpds()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
-            echo json_encode(['success' => false, 'message' => 'id_client wajib diisi']);
+        if (!isset($post["id_client"])) {
+            echo json_encode(["success" => false, "message" => "id_client wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             $sql = "
                 SELECT
@@ -2130,58 +2111,58 @@ class ApiMobileServiceController extends Controller {
                   AND mu.id_client = :id_client
                 ORDER BY ms.name ASC
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_client', $post['id_client'])
-                ->queryAll();
-    
+
+            $rows = Yii::app()->db->createCommand($sql)->bindValue(":id_client", $post["id_client"])->queryAll();
+
             $data = [];
             foreach ($rows as $row) {
                 $data[] = [
-                    'user_id'       => $row['user_id'],
-                    'display_name'  => $row['display_name'],
-                    'code'          => $row['code'],
-                    'stase_name'    => $row['stase_name'],
-                    'm_semester'    => $row['semester_id'] ? [
-                        'id'          => $row['semester_id'],
-                        'name'        => $row['semester_name'],
-                        'stage_color' => $row['stage_color'],
-                    ] : null,
+                    "user_id" => $row["user_id"],
+                    "display_name" => $row["display_name"],
+                    "code" => $row["code"],
+                    "stase_name" => $row["stase_name"],
+                    "m_semester" => $row["semester_id"]
+                        ? [
+                            "id" => $row["semester_id"],
+                            "name" => $row["semester_name"],
+                            "stage_color" => $row["stage_color"],
+                        ]
+                        : null,
                 ];
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
+
         Yii::app()->end();
     }
-    
-    public function actionExploreDetailPpds() {
-        header('Content-Type: application/json');
+
+    public function actionExploreDetailPpds()
+    {
+        header("Content-Type: application/json");
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-    
+
         // Validasi wajib
-        if (!isset($post['id_client'])) {
-            echo json_encode(['success' => false, 'message' => 'id_client wajib diisi']);
+        if (!isset($post["id_client"])) {
+            echo json_encode(["success" => false, "message" => "id_client wajib diisi"]);
             Yii::app()->end();
         }
-    
-        if (!isset($post['id_user'])) {
-            echo json_encode(['success' => false, 'message' => 'id_user wajib diisi']);
+
+        if (!isset($post["id_user"])) {
+            echo json_encode(["success" => false, "message" => "id_user wajib diisi"]);
             Yii::app()->end();
         }
-    
+
         try {
             $sql = "
                 SELECT
@@ -2209,107 +2190,115 @@ class ApiMobileServiceController extends Controller {
                   AND mu.id_client = :id_client
                   AND mu.deleted_at IS NULL
             ";
-    
-            $rows = Yii::app()->db->createCommand($sql)
-                ->bindValue(':id_client', $post['id_client'])
-                ->bindValue(':id_user', $post['id_user'])
+
+            $rows = Yii::app()
+                ->db->createCommand($sql)
+                ->bindValue(":id_client", $post["id_client"])
+                ->bindValue(":id_user", $post["id_user"])
                 ->queryAll();
-    
+
             if (empty($rows)) {
-                echo json_encode(['success' => false, 'message' => 'User tidak ditemukan']);
+                echo json_encode(["success" => false, "message" => "User tidak ditemukan"]);
                 Yii::app()->end();
             }
-    
+
             // Data user diambil dari row pertama
             $firstRow = $rows[0];
             $user = [
-                'id'            => $firstRow['id'],
-                'display_name'  => $firstRow['display_name'],
-                'code'          => $firstRow['code'],
-                'address'       => $firstRow['address'],
-                'gender'        => $firstRow['gender'],
-                'date_of_birth' => $firstRow['date_of_birth'],
-                'm_semester'    => [
-                    'name'        => $firstRow['semester_name'],
-                    'label_color' => $firstRow['label_color'],
+                "id" => $firstRow["id"],
+                "display_name" => $firstRow["display_name"],
+                "code" => $firstRow["code"],
+                "address" => $firstRow["address"],
+                "gender" => $firstRow["gender"],
+                "date_of_birth" => $firstRow["date_of_birth"],
+                "m_semester" => [
+                    "name" => $firstRow["semester_name"],
+                    "label_color" => $firstRow["label_color"],
                 ],
-                't_logbook'     => [],
+                "t_logbook" => [],
             ];
-    
+
             // Susun logbook array
             foreach ($rows as $row) {
-                if ($row['logbook_id']) {
-                    $user['t_logbook'][] = [
-                        'id'      => $row['logbook_id'],
-                        'id_user' => $row['logbook_id_user'],
-                        'm_action' => $row['action_id'] ? [
-                            'id'         => $row['action_id'],
-                            'name'       => $row['action_name'],
-                            'identifier' => $row['action_identifier'],
-                        ] : null,
+                if ($row["logbook_id"]) {
+                    $user["t_logbook"][] = [
+                        "id" => $row["logbook_id"],
+                        "id_user" => $row["logbook_id_user"],
+                        "m_action" => $row["action_id"]
+                            ? [
+                                "id" => $row["action_id"],
+                                "name" => $row["action_name"],
+                                "identifier" => $row["action_identifier"],
+                            ]
+                            : null,
                     ];
                 }
             }
-    
+
             echo json_encode([
-                'success' => true,
-                'data'    => $user
+                "success" => true,
+                "data" => $user,
             ]);
-    
         } catch (Exception $e) {
             echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
+                "success" => false,
+                "message" => $e->getMessage(),
             ]);
         }
-    
-        Yii::app()->end();
-    }
-    
-    public function actionGetLogbookIdCustomer() {
-    header('Content-Type: application/json');
-    $rest_json = file_get_contents("php://input");
-    $post = json_decode($rest_json, true);
 
-    if (!isset($post['id_client']) || !isset($post['id_action']) || !isset($post['role']) || !isset($post['user_id'])) {
-        echo json_encode([
-            'success' => false,
-            'message' => 'id_client, id_action, role, user_id wajib diisi'
-        ]);
         Yii::app()->end();
     }
 
-    try {
-        $role   = $post['role'];
-        $userId = $post['user_id'];
-        $customerId = isset($post['customer_id']) ? $post['customer_id'] : null;
-        
-        $params = [
-            ':id_action' => $post['id_action'],
-            ':id_client' => $post['id_client'],
-        ];
+    public function actionGetLogbookIdCustomer()
+    {
+        header("Content-Type: application/json");
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
 
-        // Filter berdasarkan role
-        if ($role === 'ppds') {
-            $roleFilter = "t.id_user = :user_id";
-            $params[':user_id'] = $userId;
-        } elseif ($role === 'staff') {
-            $roleFilter = "
+        if (
+            !isset($post["id_client"]) ||
+            !isset($post["id_action"]) ||
+            !isset($post["role"]) ||
+            !isset($post["user_id"])
+        ) {
+            echo json_encode([
+                "success" => false,
+                "message" => "id_client, id_action, role, user_id wajib diisi",
+            ]);
+            Yii::app()->end();
+        }
+
+        try {
+            $role = $post["role"];
+            $userId = $post["user_id"];
+            $customerId = isset($post["customer_id"]) ? $post["customer_id"] : null;
+
+            $params = [
+                ":id_action" => $post["id_action"],
+                ":id_client" => $post["id_client"],
+            ];
+
+            // Filter berdasarkan role
+            if ($role === "ppds") {
+                $roleFilter = "t.id_user = :user_id";
+                $params[":user_id"] = $userId;
+            } elseif ($role === "staff") {
+                $roleFilter = "
                 m_user.is_show = true 
                 AND m_user.status = 'Active'
             ";
-        } else {
-            $roleFilter = "1=1";
-        }
+            } else {
+                $roleFilter = "1=1";
+            }
 
-        // Filter customer_id jika ada
-        $customerFilter = "";
-        if ($customerId) {
-            $customerFilter = "AND t.id_user = :customer_id";
-            $params[':customer_id'] = $customerId;
-        }
+            // Filter customer_id jika ada
+            $customerFilter = "";
+            if ($customerId) {
+                $customerFilter = "AND t.id_user = :customer_id";
+                $params[":customer_id"] = $customerId;
+            }
 
-        $sql = "
+            $sql = "
             SELECT
                 t.id,
                 t.id_action,
@@ -2330,50 +2319,2097 @@ class ApiMobileServiceController extends Controller {
             ORDER BY t.created_date DESC
         ";
 
-        $command = Yii::app()->db->createCommand($sql);
-        foreach ($params as $key => $value) {
-            $command->bindValue($key, $value);
+            $command = Yii::app()->db->createCommand($sql);
+            foreach ($params as $key => $value) {
+                $command->bindValue($key, $value);
+            }
+
+            $rows = $command->queryAll();
+
+            // Susun nested structure
+            $data = [];
+            foreach ($rows as $row) {
+                $data[] = [
+                    "id" => $row["id"],
+                    "id_action" => $row["id_action"],
+                    "created_by" => $row["created_by"],
+                    "verified" => $row["verified"],
+                    "exam_result" => $row["exam_result"],
+                    "location" => $row["location"],
+                    "date" => $row["date"],
+                    "m_user" => [
+                        "display_name" => $row["_user_display_name"],
+                    ],
+                ];
+            }
+
+            echo json_encode([
+                "success" => true,
+                "total" => count($data),
+                "data" => $data,
+            ]);
+        } catch (Exception $e) {
+            echo json_encode([
+                "success" => false,
+                "message" => $e->getMessage(),
+            ]);
         }
 
-        $rows = $command->queryAll();
-
-        // Susun nested structure
-        $data = [];
-        foreach ($rows as $row) {
-            $data[] = [
-                'id' => $row['id'],
-                'id_action' => $row['id_action'],
-                'created_by' => $row['created_by'],
-                'verified' => $row['verified'],
-                'exam_result' => $row['exam_result'],
-                'location' => $row['location'],
-                'date' => $row['date'],
-                'm_user' => [
-                    'display_name' => $row['_user_display_name']
-                ]
-            ];
-        }
-
-        echo json_encode([
-            'success' => true,
-            'total'   => count($data),
-            'data'    => $data
-        ]);
-
-    } catch (Exception $e) {
-        echo json_encode([
-            'success' => false,
-            'message' => $e->getMessage()
-        ]);
+        Yii::app()->end();
     }
 
-    Yii::app()->end();
-}
-    
-    
-    
-    
-    
-    
-    
+
+
+    //ini create logbokkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+    public function actionCreateLogbook()
+    {
+        header("Content-Type: application/json; charset=utf-8");
+        $payload = json_decode(file_get_contents("php://input"), true);
+        if (!is_array($payload)) {
+            return $this->createLogbookJson(false, "Payload JSON tidak valid.", 400);
+        }
+        // Login mobile saat ini stateless dan belum menerbitkan token/session.
+        // Karena itu identitas legacy harus dikirim dari response login.
+        if (
+            !$this->createLogbookPositiveId(isset($payload["created_by"]) ? $payload["created_by"] : null) ||
+            !$this->createLogbookPositiveId(isset($payload["id_client"]) ? $payload["id_client"] : null)
+        ) {
+            return $this->createLogbookJson(false, "created_by dan id_client dari hasil login wajib valid.", 422);
+        }
+        if (
+            !$this->createLogbookPositiveId(isset($payload["id_action"]) ? $payload["id_action"] : null) ||
+            !isset($payload["date"]) ||
+            !$this->createLogbookDate($payload["date"])
+        ) {
+            return $this->createLogbookJson(false, "id_action dan date (YYYY-MM-DD) wajib valid.", 422);
+        }
+        // Database configured for this API is the named Yii connection dbPrasi.
+        // Keep all metadata, validation, and transaction writes on this same
+        // connection so the transaction is atomic.
+        $db = Yii::app()->dbPrasi;
+        $transaction = null;
+        try {
+            $actor = $this->createLogbookActor($db, $payload);
+            $idClient = (int) $actor["id_client"];
+            $idAction = (int) $payload["id_action"];
+            $action = $this->createLogbookAction($db, $idAction, $idClient);
+            $target = $this->createLogbookTarget($db, $payload, $actor, $idClient);
+            $this->createLogbookRejectUnsupportedFields($payload, $action);
+            $this->createLogbookValidateScalarFields($payload);
+
+            $transaction = $db->beginTransaction();
+            $now = date("Y-m-d H:i:s");
+            $data = [
+                "id_action" => $idAction,
+                "id_client" => $idClient,
+                "id_user" => (int) $target["id"],
+                "id_semester" => $this->createLogbookNullableId($target["id_semester"]),
+                "id_stase" => $this->createLogbookNullableId($target["id_stase"]),
+                "created_by" => (int) $actor["id"],
+                "date" => $payload["date"],
+                "notes" => $this->createLogbookText($payload, "notes"),
+                "verified" => false,
+                "verified_status" => "pending",
+                "schedule_status" => "pending",
+                "created_date" => $now,
+            ];
+            $this->createLogbookApplyFlaggedFields($db, $data, $payload, $action, $idClient, $idAction);
+            $this->createLogbookAssertColumns($db, "t_logbook", array_keys($data));
+            // PostgreSQL: pakai RETURNING id seperti endpoint legacy. getLastInsertID()
+            // bergantung pada nama sequence/lastval dan dapat mengembalikan 0.
+            $idLogbook = $this->createLogbookInsertReturningId($db, "t_logbook", $data);
+            if ($idLogbook < 1) {
+                throw new RuntimeException("ID logbook baru tidak tersedia.");
+            }
+
+            $this->createLogbookChildren(
+                $db,
+                $idLogbook,
+                $payload,
+                $action,
+                $actor,
+                $target,
+                $idClient,
+                $idAction,
+                $now,
+            );
+            $saved = $db
+                ->createCommand()
+                ->select("*")
+                ->from("t_logbook")
+                ->where("id = :id AND id_client = :client", [":id" => $idLogbook, ":client" => $idClient])
+                ->queryRow();
+            $transaction->commit();
+            return $this->createLogbookJson(true, "Logbook berhasil dibuat.", 201, $saved);
+        } catch (CHttpException $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            return $this->createLogbookJson(false, $e->getMessage(), $e->statusCode);
+        } catch (Throwable $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            Yii::log("createLogbook failed: " . $e->getMessage(), CLogger::LEVEL_ERROR, "api.logbook");
+            // Temporary diagnostic for this development endpoint. Remove the
+            // exception suffix after the concrete schema/SQL error is fixed.
+            return $this->createLogbookJson(false, "Create logbook error: " . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Compatibility identity for the existing stateless mobile login.
+     * This is weaker than a server session/token: it verifies the supplied user
+     * exists and belongs to the supplied client, but cannot prove who sent it.
+     */
+    private function createLogbookActor($db, $payload)
+    {
+        $id = (int) $payload["created_by"];
+        $idClient = (int) $payload["id_client"];
+        $userSchema = $this->createLogbookAssertColumns($db, "m_user", [
+            "id",
+            "id_client",
+            "id_role",
+            "id_semester",
+            "id_stase",
+        ]);
+        $deletedWhere = isset($userSchema->columns["deleted_at"]) ? " AND u.deleted_at IS NULL" : "";
+        $actor = $db
+            ->createCommand()
+            ->select("u.id,u.id_client,u.id_role,u.id_semester,u.id_stase,r.name role_name")
+            ->from("m_user u")
+            ->leftJoin("m_role r", "r.id=u.id_role")
+            ->where("u.id=:id AND u.id_client=:client" . $deletedWhere, [":id" => $id, ":client" => $idClient])
+            ->queryRow();
+        if (!$actor) {
+            throw new CHttpException(403, "User login tidak aktif atau bukan milik client yang dipilih.");
+        }
+        return $actor;
+    }
+
+    private function createLogbookSessionValue($key)
+    {
+        $user = Yii::app()->user;
+        if ($key === "id") {
+            return $user->isGuest ? null : $user->id;
+        }
+        return $user->getState($key);
+    }
+
+    private function createLogbookAction($db, $idAction, $idClient)
+    {
+        $this->createLogbookAssertColumns($db, "m_action", ["id", "id_client"]);
+        $row = $db
+            ->createCommand()
+            ->select("*")
+            ->from("m_action")
+            ->where("id=:id AND id_client=:client", [":id" => $idAction, ":client" => $idClient])
+            ->queryRow();
+        if (!$row) {
+            throw new CHttpException(404, "Action tidak ditemukan untuk client ini.");
+        }
+        return $row;
+    }
+
+    private function createLogbookTarget($db, $payload, $actor, $idClient)
+    {
+        $role = strtolower(trim((string) $actor["role_name"]));
+        if ($role === "ppds") {
+            return $actor;
+        }
+        if (
+            !in_array($role, ["staff", "institution"], true) ||
+            !$this->createLogbookPositiveId(isset($payload["id_user"]) ? $payload["id_user"] : null)
+        ) {
+            throw new CHttpException(403, "Hanya PPDS, staff, atau institution yang dapat membuat logbook.");
+        }
+        $userSchema = $db->schema->getTable("m_user");
+        $deletedWhere = $userSchema && isset($userSchema->columns["deleted_at"]) ? " AND u.deleted_at IS NULL" : "";
+        $target = $db
+            ->createCommand()
+            ->select("u.id,u.id_client,u.id_semester,u.id_stase,r.name role_name")
+            ->from("m_user u")
+            ->leftJoin("m_role r", "r.id=u.id_role")
+            ->where("u.id=:id AND u.id_client=:client" . $deletedWhere, [
+                ":id" => (int) $payload["id_user"],
+                ":client" => $idClient,
+            ])
+            ->queryRow();
+        if (!$target || strtolower((string) $target["role_name"]) !== "ppds") {
+            throw new CHttpException(422, "id_user harus PPDS aktif pada client yang sama.");
+        }
+        $this->createLogbookAssertTargetUser($actor, $target);
+        return $target;
+    }
+
+    /**
+     * Default-deny policy: a cross-user create needs an explicit server-side
+     * authorization rule (for example a PPDS/staff assignment table). Override
+     * this method only with that authoritative relation; never trust a mobile
+     * boolean or free-form role label.
+     */
+    private function createLogbookAssertTargetUser($actor, $target)
+    {
+        if ((int) $actor["id"] !== (int) $target["id"]) {
+            throw new CHttpException(403, "Kebijakan penugasan staff ke PPDS belum dikonfigurasi.");
+        }
+    }
+
+    private function createLogbookApplyFlaggedFields($db, &$data, $payload, $action, $idClient, $idAction)
+    {
+        $map = [
+            "has_title" => ["title", "text"],
+            "has_location" => ["location", "text"],
+            "has_hospital" => ["id_hospital", "reference:m_hospital"],
+            "has_category" => ["id_category", "reference:m_action_category"],
+            "has_another_role" => ["id_another_role", "anotherRole"],
+            "has_presentation" => ["is_presentation", "boolean"],
+            "has_operation_code" => ["operation_code", "text"],
+        ];
+        foreach ($map as $flag => $spec) {
+            if (!$this->createLogbookFlag($action, $flag)) {
+                continue;
+            }
+            $field = $spec[0];
+            $type = $spec[1];
+            if ($type === "text") {
+                $data[$field] = $this->createLogbookText($payload, $field);
+            } elseif ($type === "boolean") {
+                $data[$field] = $this->createLogbookBool($payload, $field, false);
+            } else {
+                $value = $this->createLogbookRequiredOrNullableId($payload, $field);
+                if ($type === "anotherRole") {
+                    $this->createLogbookAnotherRole($db, $value, $idClient, $idAction);
+                } else {
+                    $this->createLogbookReference($db, substr($type, 10), $value, $idClient, $idAction, $field);
+                }
+                $data[$field] = $value;
+            }
+        }
+        if ($this->createLogbookFlag($action, "is_exam")) {
+            $data["exam_result"] = $this->createLogbookText($payload, "exam_result");
+        }
+        if ($this->createLogbookFlag($action, "is_milestone")) {
+            $data["is_retake"] = $this->createLogbookBool($payload, "is_retake", false);
+        }
+        if (array_key_exists("id_stase", $payload)) {
+            $data["id_stase"] = $this->createLogbookRequiredOrNullableId($payload, "id_stase");
+        }
+        if ($data["id_stase"] !== null) {
+            $this->createLogbookReference($db, "m_stase", $data["id_stase"], $idClient, $idAction, "id_stase");
+        }
+    }
+
+    private function createLogbookChildren($db, $idLogbook, $payload, $action, $actor, $target, $idClient, $idAction, $now) 
+    {
+        // Prasi menyimpan t_logbook_status berdasarkan m_action_rolemap, bukan
+        // flag has_verifier. Validasi rolemap dilakukan per row di
+        // createLogbookStatuses(), sehingga status tidak boleh ditolak di sini.
+        $children = [
+            "t_logbook_emr" => "has_emr",
+            "t_logbook_attachment" => "has_attachment",
+            "t_logbook_asm" => "has_score",
+            "t_logbook_status" => null,
+        ];
+        foreach ($children as $field => $flag) {
+            if (!array_key_exists($field, $payload)) {
+                continue;
+            }
+            if ($flag !== null && !$this->createLogbookFlag($action, $flag)) {
+                throw new CHttpException(422, $field . " tidak diizinkan oleh action ini.");
+            }
+            if (!is_array($payload[$field])) {
+                throw new CHttpException(422, $field . " harus berupa array.");
+            }
+        }
+        if (isset($payload["t_logbook_emr"])) {
+            $this->createLogbookEmr($db, $idLogbook, $payload["t_logbook_emr"], $idClient);
+        }
+        if (isset($payload["t_logbook_attachment"])) {
+            $this->createLogbookAttachments($db, $idLogbook, $payload["t_logbook_attachment"], $idClient);
+        }
+        if (isset($payload["t_logbook_asm"])) {
+            $this->createLogbookAsm($db, $idLogbook, $payload["t_logbook_asm"], $idClient, $idAction, $action);
+        }
+        if (isset($payload["t_logbook_status"])) {
+            $this->createLogbookStatuses(
+                $db,
+                $idLogbook,
+                $payload["t_logbook_status"],
+                $actor,
+                $target,
+                $idClient,
+                $idAction,
+                $now,
+                $action,
+            );
+        }
+    }
+
+    private function createLogbookEmr($db, $idLogbook, $rows, $idClient)
+    {
+        $allowed = ["patient_name", "age", "month", "gender", "diagnosis", "treatment", "emr_number"];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                throw new CHttpException(422, "Baris EMR tidak valid.");
+            }
+            foreach (["patient_name", "diagnosis"] as $required) {
+                if (!isset($row[$required]) || !is_scalar($row[$required]) || trim((string) $row[$required]) === "") {
+                    throw new CHttpException(422, "EMR memerlukan " . $required . ".");
+                }
+            }
+            if (
+                isset($row["age"]) &&
+                (!$this->createLogbookInteger($row["age"]) || (int) $row["age"] < 0 || (int) $row["age"] > 150)
+            ) {
+                throw new CHttpException(422, "Umur EMR tidak valid.");
+            }
+            if (
+                isset($row["month"]) &&
+                (!$this->createLogbookInteger($row["month"]) || (int) $row["month"] < 0 || (int) $row["month"] > 11)
+            ) {
+                throw new CHttpException(422, "Bulan EMR harus 0-11.");
+            }
+            if (isset($row["gender"])) {
+                $gender = strtolower(trim((string) $row["gender"]));
+                // Mobile label is "Male (M)"/"Female (F)"; persist the
+                // canonical legacy code expected by t_logbook_emr.
+                $gender = preg_replace('/\\s*\\([a-z]\\)\\s*$/', "", $gender);
+                if (!in_array($gender, ["male", "female", "m", "f", "l", "p"], true)) {
+                    throw new CHttpException(422, "Gender EMR tidak valid.");
+                }
+                $row["gender"] = in_array($gender, ["male", "m", "l"], true) ? "M" : "F";
+            }
+            $data = $this->createLogbookAllowedRow($row, $allowed, [
+                "id_logbook" => $idLogbook,
+                "id_client" => $idClient,
+            ]);
+            $this->createLogbookInsert($db, "t_logbook_emr", $data);
+        }
+    }
+
+    private function createLogbookAttachments($db, $idLogbook, $rows, $idClient)
+    {
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                throw new CHttpException(422, "Baris attachment tidak valid.");
+            }
+            $path = isset($row["path"])
+                ? $row["path"]
+                : (isset($row["url_file"])
+                    ? $row["url_file"]
+                    : (isset($row["url"])
+                        ? $row["url"]
+                        : null));
+            if (!$this->createLogbookSafeAttachmentPath($path)) {
+                throw new CHttpException(422, "Path attachment harus path relatif server yang aman.");
+            }
+            $data = $this->createLogbookAllowedRow(
+                $row,
+                ["name", "url_file", "file_name", "file_type", "url", "path"],
+                ["id_logbook" => $idLogbook, "id_client" => $idClient],
+            );
+            if (isset($data["path"])) {
+                $data["path"] = $this->createLogbookNormalPath($data["path"]);
+            }
+            foreach (["url_file", "url"] as $field) {
+                if (isset($data[$field])) {
+                    $data[$field] = $this->createLogbookNormalPath($data[$field]);
+                }
+            }
+            $this->createLogbookInsert($db, "t_logbook_attachment", $data);
+        }
+    }
+
+    private function createLogbookAsm($db, $idLogbook, $rows, $idClient, $idAction, $action)
+    {
+        foreach ($rows as $row) {
+            if (
+                !is_array($row) ||
+                !$this->createLogbookPositiveId(isset($row["id_asm_param"]) ? $row["id_asm_param"] : null) ||
+                !isset($row["score"]) ||
+                !is_numeric($row["score"])
+            ) {
+                throw new CHttpException(422, "ASM memerlukan id_asm_param dan score numerik.");
+            }
+            $param = $db
+                ->createCommand(
+                    "SELECT ap.id,ap.min_score,ap.max_score FROM m_asm_param ap INNER JOIN m_asm_action aa ON aa.id_asm_param=ap.id WHERE ap.id=:id AND aa.id_action=:action",
+                )
+                ->bindValues([":id" => (int) $row["id_asm_param"], ":action" => $idAction])
+                ->queryRow();
+            if (!$param) {
+                throw new CHttpException(422, "Parameter ASM tidak tersedia untuk action ini.");
+            }
+            $score = (float) $row["score"];
+            if (
+                ($param["min_score"] !== null && $score < (float) $param["min_score"]) ||
+                ($param["max_score"] !== null && $score > (float) $param["max_score"])
+            ) {
+                throw new CHttpException(422, "Score ASM di luar batas parameter.");
+            }
+            // Prasi applies m_score_option only to has_score_option actions;
+            // numeric ASM actions validate their metadata parameter bounds only.
+            if ($this->createLogbookFlag($action, "has_score_option")) {
+                $valid = $db
+                    ->createCommand()
+                    ->select("id")
+                    ->from("m_score_option")
+                    ->where("id_action=:action AND id_client=:client AND score=:score", [
+                        ":action" => $idAction,
+                        ":client" => $idClient,
+                        ":score" => $score,
+                    ])
+                    ->queryRow();
+                if (!$valid) {
+                    throw new CHttpException(422, "Score ASM bukan pilihan yang diizinkan.");
+                }
+            }
+            $this->createLogbookInsert($db, "t_logbook_asm", [
+                "id_logbook" => $idLogbook,
+                "id_client" => $idClient,
+                "id_asm_param" => (int) $row["id_asm_param"],
+                "score" => $score,
+            ]);
+        }
+    }
+
+    private function createLogbookStatuses($db, $idLogbook, $rows, $actor, $target, $idClient, $idAction, $now, $action)
+    {
+        foreach ($rows as $row) {
+            if (
+                !is_array($row) ||
+                !$this->createLogbookPositiveId(isset($row["id_user"]) ? $row["id_user"] : null) ||
+                !$this->createLogbookPositiveId(isset($row["id_action_role"]) ? $row["id_action_role"] : null)
+            ) {
+                throw new CHttpException(422, "Verifier memerlukan id_user dan id_action_role.");
+            }
+            $isJejaring = array_key_exists("notes", $row) && $row["notes"] === "__staff_jejaring__";
+            if (array_key_exists("notes", $row) && !$isJejaring) {
+                throw new CHttpException(422, "Catatan status verifier tidak diizinkan.");
+            }
+            if (isset($row["status"]) && strtolower((string) $row["status"]) !== "pending") {
+                throw new CHttpException(422, "Status verifier awal harus pending.");
+            }
+            if ($isJejaring) {
+                $this->createLogbookAssertStaffJejaringStatus($db, $row, $target, $idClient, $idAction);
+                $this->createLogbookInsert($db, "t_logbook_status", [
+                    "id_logbook" => $idLogbook,
+                    "id_client" => $idClient,
+                    "id_user" => (int) $row["id_user"],
+                    "id_action_role" => (int) $row["id_action_role"],
+                    "status" => "pending",
+                    "notes" => "__staff_jejaring__",
+                    "date_time" => $now,
+                ]);
+                continue;
+            }
+            // m_action_rolemap maps an action to an action-role, not to
+            // m_user.id_role. Prasi chooses staff users by m_role, then stores
+            // the selected action-role separately in t_logbook_status.
+            $rolemap = $db
+                ->createCommand(
+                    "SELECT arm.id FROM m_action_rolemap arm INNER JOIN m_action_role ar ON ar.id=arm.id_action_role WHERE arm.id_action=:action AND arm.id_action_role=:role AND ar.id_client=:client",
+                )
+                ->bindValues([":action" => $idAction, ":role" => (int) $row["id_action_role"], ":client" => $idClient])
+                ->queryRow();
+            if (!$rolemap) {
+                throw new CHttpException(422, "Rolemap verifier tidak tersedia untuk action ini.");
+            }
+
+            $userSchema = $db->schema->getTable("m_user");
+            $activeWhere = $userSchema && isset($userSchema->columns["deleted_at"]) ? " AND u.deleted_at IS NULL" : "";
+            if ($userSchema && isset($userSchema->columns["status"])) {
+                $activeWhere .= " AND LOWER(u.status)='active'";
+            }
+            $actionText = strtolower(
+                trim(
+                    (isset($action["name"]) ? $action["name"] : "") .
+                        " " .
+                        (isset($action["action_name"]) ? $action["action_name"] : "") .
+                        " " .
+                        (isset($action["identifier"]) ? $action["identifier"] : ""),
+                ),
+            );
+            $staffRoles =
+                strpos($actionText, "morbid") !== false
+                    ? "(LOWER(TRIM(r.name))='staff' OR LOWER(TRIM(r.name))='staff jejaring')"
+                    : "LOWER(TRIM(r.name))='staff'";
+            $verifier = $db
+                ->createCommand(
+                    "SELECT u.id FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE u.id=:user AND u.id_client=:client" .
+                        $activeWhere .
+                        " AND " .
+                        $staffRoles,
+                )
+                ->bindValues([":user" => (int) $row["id_user"], ":client" => $idClient])
+                ->queryRow();
+            if (!$verifier) {
+                throw new CHttpException(422, "Verifier bukan staff aktif yang diizinkan.");
+            }
+            $this->createLogbookInsert($db, "t_logbook_status", [
+                "id_logbook" => $idLogbook,
+                "id_client" => $idClient,
+                "id_user" => (int) $row["id_user"],
+                "id_action_role" => (int) $row["id_action_role"],
+                "status" => "pending",
+                "date_time" => $now,
+            ]);
+        }
+    }
+
+    private function createLogbookAssertStaffJejaringStatus($db, $row, $target, $idClient, $idAction)
+    {
+        $staseSchema = $db->schema->getTable("m_stase");
+        if (
+            !$staseSchema ||
+            !isset($staseSchema->columns["has_staff_jejaring"]) ||
+            !$this->createLogbookPositiveId(isset($target["id_stase"]) ? $target["id_stase"] : null)
+        ) {
+            throw new CHttpException(422, "Staff Pengajar Jejaring tidak tersedia untuk stase PPDS ini.");
+        }
+        $stase = $db
+            ->createCommand("SELECT has_staff_jejaring FROM m_stase WHERE id=:id AND id_client=:client")
+            ->bindValues([":id" => (int) $target["id_stase"], ":client" => $idClient])
+            ->queryRow();
+        if (!$stase || !$this->createLogbookTruthy($stase["has_staff_jejaring"])) {
+            throw new CHttpException(422, "Staff Pengajar Jejaring tidak tersedia untuk stase PPDS ini.");
+        }
+
+        $rolemap = $db
+            ->createCommand(
+                "SELECT ar.role, ar.identifier FROM m_action_rolemap arm INNER JOIN m_action_role ar ON ar.id=arm.id_action_role WHERE arm.id_action=:action AND arm.id_action_role=:role AND ar.id_client=:client",
+            )
+            ->bindValues([":action" => $idAction, ":role" => (int) $row["id_action_role"], ":client" => $idClient])
+            ->queryRow();
+        if (!$rolemap || !$this->createLogbookIsMainStaffPengajar($rolemap["role"], $rolemap["identifier"])) {
+            throw new CHttpException(422, "Role Staff Pengajar utama tidak cocok.");
+        }
+
+        $userSchema = $db->schema->getTable("m_user");
+        $where = "u.id=:user AND u.id_client=:client AND LOWER(r.name)=:role";
+        if ($userSchema && isset($userSchema->columns["deleted_at"])) {
+            $where .= " AND u.deleted_at IS NULL";
+        }
+        if ($userSchema && isset($userSchema->columns["status"])) {
+            $where .= " AND LOWER(u.status)='active'";
+        }
+        $user = $db
+            ->createCommand("SELECT u.id FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE " . $where)
+            ->bindValues([":user" => (int) $row["id_user"], ":client" => $idClient, ":role" => "staff jejaring"])
+            ->queryRow();
+        if (!$user) {
+            throw new CHttpException(422, "Staff Pengajar Jejaring tidak aktif atau tidak cocok.");
+        }
+    }
+
+    private function createLogbookTruthy($value)
+    {
+        return $value === true || in_array(strtolower(trim((string) $value)), ["1", "true", "t", "yes", "y"], true);
+    }
+    private function createLogbookIsMainStaffPengajar($role, $identifier)
+    {
+        $name = preg_replace("/[\\s_-]+/", " ", strtolower(trim((string) $role)));
+        $id = preg_replace("/[\\s_-]+/", " ", strtolower(trim((string) $identifier)));
+        return (strpos($name, "staff pengajar") !== false || strpos($id, "staff pengajar") !== false) &&
+            strpos($name, "jejaring") === false &&
+            strpos($id, "jejaring") === false;
+    }
+
+    private function createLogbookRejectUnsupportedFields($payload, $action)
+    {
+        $fields = [
+            "title" => "has_title",
+            "location" => "has_location",
+            "id_hospital" => "has_hospital",
+            "id_category" => "has_category",
+            "id_another_role" => "has_another_role",
+            "is_presentation" => "has_presentation",
+            "operation_code" => "has_operation_code",
+            "exam_result" => "is_exam",
+            "is_retake" => "is_milestone",
+        ];
+        foreach ($fields as $field => $flag) {
+            if (array_key_exists($field, $payload) && !$this->createLogbookFlag($action, $flag)) {
+                throw new CHttpException(422, $field . " tidak diizinkan oleh action ini.");
+            }
+        }
+    }
+
+    private function createLogbookReference($db, $table, $id, $idClient, $idAction, $field)
+    {
+        if ($id === null) {
+            return;
+        }
+        $schema = $this->createLogbookAssertColumns($db, $table, ["id", "id_client"]);
+        $where = "id=:id AND id_client=:client";
+        $params = [":id" => $id, ":client" => $idClient];
+        if (isset($schema->columns["id_action"])) {
+            $where .= " AND id_action=:action";
+            $params[":action"] = $idAction;
+        }
+        if (isset($schema->columns["deleted_at"])) {
+            $where .= " AND deleted_at IS NULL";
+        }
+        if (!$db->createCommand()->select("id")->from($table)->where($where, $params)->queryRow()) {
+            throw new CHttpException(422, $field . " tidak valid.");
+        }
+    }
+
+    private function createLogbookAnotherRole($db, $id, $idClient, $idAction)
+    {
+        if ($id === null) {
+            return;
+        }
+        $ok = $db
+            ->createCommand(
+                "SELECT ar.id FROM m_another_role ar INNER JOIN m_action_another_role map ON map.id_another_role=ar.id WHERE ar.id=:id AND ar.id_client=:client AND map.id_action=:action",
+            )
+            ->bindValues([":id" => $id, ":client" => $idClient, ":action" => $idAction])
+            ->queryRow();
+        if (!$ok) {
+            throw new CHttpException(422, "id_another_role tidak tersedia untuk action ini.");
+        }
+    }
+
+    private function createLogbookInsert($db, $table, $data)
+    {
+        $this->createLogbookAssertColumns($db, $table, array_keys($data));
+        $db->createCommand()->insert($table, $data);
+    }
+    private function createLogbookInsertReturningId($db, $table, $data)
+    {
+        $this->createLogbookAssertColumns($db, $table, array_keys($data));
+        $columns = [];
+        $placeholders = [];
+        $params = [];
+        $index = 0;
+        foreach ($data as $column => $value) {
+            // Column names come from fixed backend data and schema validation.
+            $columns[] = '"' . str_replace('"', '""', $column) . '"';
+            $placeholder = ":create_value_" . $index++;
+            $placeholders[] = $placeholder;
+            $params[$placeholder] = $value;
+        }
+        $sql =
+            'INSERT INTO "' .
+            str_replace('"', '""', $table) .
+            '" (' .
+            implode(",", $columns) .
+            ") VALUES (" .
+            implode(",", $placeholders) .
+            ') RETURNING "id"';
+        $command = $db->createCommand($sql);
+        foreach ($params as $placeholder => $value) {
+            $type =
+                $value === null
+                    ? PDO::PARAM_NULL
+                    : (is_bool($value)
+                        ? PDO::PARAM_BOOL
+                        : (is_int($value)
+                            ? PDO::PARAM_INT
+                            : PDO::PARAM_STR));
+            $command->bindValue($placeholder, $value, $type);
+        }
+        return (int) $command->queryScalar();
+    }
+    private function createLogbookAllowedRow($row, $allowed, $fixed)
+    {
+        $data = $fixed;
+        foreach ($allowed as $field) {
+            if (array_key_exists($field, $row)) {
+                if (!is_scalar($row[$field]) && $row[$field] !== null) {
+                    throw new CHttpException(422, $field . " harus scalar.");
+                }
+                $data[$field] = $row[$field];
+            }
+        }
+        return $data;
+    }
+    private function createLogbookFlag($action, $field)
+    {
+        return isset($action[$field]) &&
+            in_array(strtolower((string) $action[$field]), ["1", "true", "t", "yes", "y"], true);
+    }
+    private function createLogbookPositiveId($value)
+    {
+        return is_scalar($value) && preg_match('/^[1-9][0-9]*$/', (string) $value) === 1;
+    }
+    private function createLogbookNullableId($value)
+    {
+        return $this->createLogbookPositiveId($value) ? (int) $value : null;
+    }
+    private function createLogbookRequiredOrNullableId($payload, $field)
+    {
+        if (!array_key_exists($field, $payload) || $payload[$field] === "" || $payload[$field] === null) {
+            return null;
+        }
+        if (!$this->createLogbookPositiveId($payload[$field])) {
+            throw new CHttpException(422, $field . " harus ID positif.");
+        }
+        return (int) $payload[$field];
+    }
+    private function createLogbookInteger($value)
+    {
+        return is_scalar($value) && preg_match('/^-?[0-9]+$/', (string) $value) === 1;
+    }
+    private function createLogbookDate($value)
+    {
+        if (!is_string($value)) {
+            return false;
+        }
+        foreach (["!Y-m-d", "!Y-m-d H:i:s"] as $format) {
+            $date = DateTime::createFromFormat($format, $value);
+            if ($date && $date->format(ltrim($format, "!")) === $value) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private function createLogbookText($payload, $field)
+    {
+        if (!array_key_exists($field, $payload) || $payload[$field] === null || $payload[$field] === "") {
+            return null;
+        }
+        if (!is_scalar($payload[$field])) {
+            throw new CHttpException(422, $field . " harus teks.");
+        }
+        return trim((string) $payload[$field]);
+    }
+    private function createLogbookBool($payload, $field, $default)
+    {
+        if (!array_key_exists($field, $payload)) {
+            return $default;
+        }
+        if (is_bool($payload[$field])) {
+            return $payload[$field];
+        }
+        if (in_array((string) $payload[$field], ["0", "1"], true)) {
+            return $payload[$field] === "1";
+        }
+        throw new CHttpException(422, $field . " harus boolean.");
+    }
+    private function createLogbookSafeAttachmentPath($path)
+    {
+        return is_string($path) &&
+            $path !== "" &&
+            preg_match(
+                '#^(?![\\\\/]|[A-Za-z]:)(?!.*(?:^|[\\\\/])\.\.(?:[\\\\/]|$))[A-Za-z0-9][A-Za-z0-9._/\\\\-]*$#',
+                $path,
+            ) === 1;
+    }
+    private function createLogbookNormalPath($path)
+    {
+        return str_replace("\\\\", "/", (string) $path);
+    }
+    private function createLogbookValidateScalarFields($payload)
+    {
+        foreach (["notes", "title", "location", "operation_code", "exam_result"] as $field) {
+            if (isset($payload[$field]) && !is_scalar($payload[$field])) {
+                throw new CHttpException(422, $field . " harus teks.");
+            }
+        }
+    }
+    private function createLogbookAssertColumns($db, $table, $columns)
+    {
+        $schema = $db->schema->getTable($table);
+        if (!$schema) {
+            throw new CHttpException(500, "Tabel " . $table . " tidak ditemukan.");
+        }
+        foreach ($columns as $column) {
+            if (!isset($schema->columns[$column])) {
+                throw new CHttpException(500, "Kolom " . $table . "." . $column . " tidak ditemukan.");
+            }
+        }
+        return $schema;
+    }
+    private function createLogbookJson($success, $message, $status, $data = null)
+    {
+        if (!headers_sent()) {
+            http_response_code($status);
+        }
+        $out = ["success" => (bool) $success, "message" => $message];
+        if ($data !== null) {
+            $out["data"] = $data;
+        }
+        echo json_encode($out);
+        Yii::app()->end();
+    }
+
+    // update logbookkkkkkkkkkkk
+    public function actionUpdateLogbook()
+    {
+        header("Content-Type: application/json; charset=utf-8");
+        $payload = json_decode(file_get_contents("php://input"), true);
+        if (!is_array($payload)) {
+            return $this->updateLogbookJson(false, "Payload JSON tidak valid.", 400);
+        }
+        foreach (["id", "created_by", "id_client"] as $field) {
+            if (!$this->updateLogbookPositiveId(isset($payload[$field]) ? $payload[$field] : null)) {
+                return $this->updateLogbookJson(false, "Permintaan tidak valid.", 422);
+            }
+        }
+        $db = Yii::app()->dbPrasi;
+        $transaction = null;
+        try {
+            $transaction = $db->beginTransaction();
+            $actor = $this->updateLogbookActor($db, $payload);
+            $parent = $this->updateLogbookLockedParent(
+                $db,
+                (int) $payload["id"],
+                (int) $actor["id_client"],
+                (int) $actor["id"],
+            );
+            $action = $db
+                ->createCommand("SELECT * FROM m_action WHERE id=:id AND id_client=:id_client")
+                ->bindValues([":id" => (int) $parent["id_action"], ":id_client" => (int) $actor["id_client"]])
+                ->queryRow();
+            if (!$action) {
+                throw new CHttpException(404, "Logbook tidak ditemukan.");
+            }
+            $data = $this->updateLogbookScalarFields($db, $payload, $action, (int) $actor["id_client"]);
+            if (!$data) {
+                throw new CHttpException(422, "Tidak ada perubahan yang diizinkan.");
+            }
+            $now = date("Y-m-d H:i:s");
+            $schema = $this->updateLogbookSchema($db, "t_logbook");
+            if (isset($schema["updated_date"])) {
+                $data["updated_date"] = $now;
+            }
+            $this->updateLogbookBoundUpdate(
+                $db,
+                "t_logbook",
+                $data,
+                "id=:id AND id_client=:id_client AND id_user=:actor_id",
+                [
+                    ":id" => (int) $parent["id"],
+                    ":id_client" => (int) $actor["id_client"],
+                    ":actor_id" => (int) $actor["id"],
+                ],
+            );
+            if (array_key_exists("t_logbook_emr", $payload)) {
+                $this->updateLogbookUpsertEmrByLogbook(
+                    $db,
+                    $payload["t_logbook_emr"],
+                    $action,
+                    (int) $parent["id"],
+                    (int) $actor["id_client"],
+                    $now,
+                );
+            }
+            // Child rows stay unchanged unless the client supplies server-issued IDs.
+            // IDs are locked and scoped below; no client field can create or re-parent a child.
+            if (array_key_exists("t_logbook_attachment", $payload)) {
+                $this->updateLogbookServerIssuedChildren(
+                    $db,
+                    "t_logbook_attachment",
+                    $payload["t_logbook_attachment"],
+                    ["name", "url_file", "file_name", "file_type", "url", "path"],
+                    (int) $parent["id"],
+                    (int) $actor["id_client"],
+                    $now,
+                );
+            }
+            if (array_key_exists("t_logbook_status", $payload)) {
+                $this->updateLogbookUpdateVerifierAssignments(
+                    $db,
+                    $payload["t_logbook_status"],
+                    $action,
+                    (int) $parent["id"],
+                    (int) $actor["id_client"],
+                    $now,
+                );
+            }
+            $saved = $db
+                ->createCommand()
+                ->select("*")
+                ->from("t_logbook")
+                ->where("id=:id AND id_client=:id_client", [
+                    ":id" => (int) $parent["id"],
+                    ":id_client" => (int) $actor["id_client"],
+                ])
+                ->queryRow();
+            $transaction->commit();
+            return $this->updateLogbookJson(true, "Logbook berhasil diperbarui.", 200, $saved);
+        } catch (CHttpException $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            return $this->updateLogbookJson(false, $e->getMessage(), $e->statusCode);
+        } catch (Throwable $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            Yii::log("UpdateLogbook failed: " . $e->getMessage(), CLogger::LEVEL_ERROR, "api.logbook");
+            return $this->updateLogbookJson(false, "Gagal memperbarui logbook.", 500);
+        }
+    }
+
+    private function updateLogbookActor($db, $payload)
+    {
+        $columns = $this->updateLogbookSchema($db, "m_user");
+        $where = "u.id=:id AND u.id_client=:id_client AND LOWER(r.name) = :ppds_role";
+        if (isset($columns["deleted_at"])) {
+            $where .= " AND u.deleted_at IS NULL";
+        }
+        $actor = $db
+            ->createCommand(
+                "SELECT u.id,u.id_client FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE " . $where,
+            )
+            ->bindValues([
+                ":id" => (int) $payload["created_by"],
+                ":id_client" => (int) $payload["id_client"],
+                ":ppds_role" => "ppds",
+            ])
+            ->queryRow();
+        if (!$actor) {
+            throw new CHttpException(403, "Akses tidak diizinkan.");
+        }
+        return $actor;
+    }
+
+    private function updateLogbookLockedParent($db, $id, $idClient, $actorId)
+    {
+        $columns = $this->updateLogbookSchema($db, "t_logbook");
+        foreach (["id", "id_client", "id_user", "id_action"] as $column) {
+            if (!isset($columns[$column])) {
+                throw new RuntimeException("Required logbook schema is unavailable.");
+            }
+        }
+        // Prasi ownership is the PPDS record owner. `created_by` is legacy audit
+        // data and may differ for migrated entries, so it must not block edits.
+        $where = "lb.id=:id AND lb.id_client = :id_client AND lb.id_user = :actor_id";
+        if (isset($columns["deleted_at"])) {
+            $where .= " AND lb.deleted_at IS NULL";
+        }
+        if (isset($columns["verified_status"])) {
+            $where .= " AND LOWER(COALESCE(lb.verified_status, 'pending')) IN ('pending','revised','rejected')";
+        }
+        // Prasi `action_save.show()` gates PPDS edits only by the parent
+        // verified_status. It does not reject an edit merely because a sibling
+        // verifier row has already transitioned.
+        $parent = $db
+            ->createCommand("SELECT lb.* FROM t_logbook lb WHERE " . $where . " FOR UPDATE")
+            ->bindValues([":id" => $id, ":id_client" => $idClient, ":actor_id" => $actorId])
+            ->queryRow();
+        if (!$parent) {
+            throw new CHttpException(403, "Logbook tidak dapat diubah.");
+        }
+        return $parent;
+    }
+
+    private function updateLogbookScalarFields($db, $payload, $action, $idClient)
+    {
+        $schema = $this->updateLogbookSchema($db, "t_logbook");
+        $allowed = [
+            "date" => "date",
+            "notes" => "text",
+            "title" => "text",
+            "location" => "text",
+            "operation_code" => "text",
+            "exam_result" => "text",
+            "is_retake" => "bool",
+            "is_presentation" => "bool",
+            "id_hospital" => "id",
+            "id_category" => "id",
+            "id_another_role" => "id",
+            "id_stase" => "id",
+        ];
+        $flagged = [
+            "title" => "has_title",
+            "location" => "has_location",
+            "operation_code" => "has_operation_code",
+            "exam_result" => "is_exam",
+            "is_retake" => "is_milestone",
+            "is_presentation" => "has_presentation",
+            "id_hospital" => "has_hospital",
+            "id_category" => "has_category",
+            "id_another_role" => "has_another_role",
+        ];
+        $data = [];
+        foreach ($allowed as $field => $type) {
+            if (!array_key_exists($field, $payload)) {
+                continue;
+            }
+            if (!isset($schema[$field])) {
+                throw new CHttpException(422, "Field tidak didukung.");
+            }
+            if (isset($flagged[$field]) && !$this->updateLogbookFlag($action, $flagged[$field])) {
+                throw new CHttpException(422, "Field tidak diizinkan.");
+            }
+            if ($type === "date") {
+                if (!$this->updateLogbookDate($payload[$field])) {
+                    throw new CHttpException(422, "Tanggal tidak valid.");
+                }
+                $data[$field] = $payload[$field];
+            } elseif ($type === "text") {
+                if ($payload[$field] !== null && !is_scalar($payload[$field])) {
+                    throw new CHttpException(422, "Field tidak valid.");
+                }
+                $data[$field] = $payload[$field] === null ? null : trim((string) $payload[$field]);
+            } elseif ($type === "bool") {
+                $data[$field] = $this->updateLogbookBool($payload[$field]);
+            } else {
+                $data[$field] = $this->updateLogbookNullableId($payload[$field]);
+            }
+        }
+        return $data;
+    }
+
+    /**
+     * Prasi upserts EMR by its trusted parent logbook relation. Mobile must not
+     * know or invent a child-row ID; the locked parent scope is the authority.
+     */
+    private function updateLogbookUpsertEmrByLogbook($db, $rows, $action, $idLogbook, $idClient, $now)
+    {
+        if (!$this->updateLogbookFlag($action, "has_emr")) {
+            throw new CHttpException(422, "EMR tidak diizinkan.");
+        }
+        if (!is_array($rows) || count($rows) !== 1 || !is_array($rows[0])) {
+            throw new CHttpException(422, "Baris EMR tidak valid.");
+        }
+        $schema = $this->updateLogbookSchema($db, "t_logbook_emr", false);
+        if (!$schema || !isset($schema["id"]) || !isset($schema["id_logbook"])) {
+            throw new CHttpException(422, "EMR tidak didukung oleh schema.");
+        }
+
+        $data = [];
+        foreach (["patient_name", "age", "month", "gender", "diagnosis", "treatment", "emr_number"] as $field) {
+            if (!array_key_exists($field, $rows[0]) || !isset($schema[$field])) {
+                continue;
+            }
+            if ($rows[0][$field] !== null && !is_scalar($rows[0][$field])) {
+                throw new CHttpException(422, "EMR tidak valid.");
+            }
+            $data[$field] = $rows[0][$field];
+        }
+        if (!$data) {
+            return;
+        }
+        if (isset($schema["updated_date"])) {
+            $data["updated_date"] = $now;
+        }
+
+        $where = "id_logbook=:id_logbook";
+        $params = [":id_logbook" => $idLogbook];
+        if (isset($schema["id_client"])) {
+            $where .= " AND id_client=:id_client";
+            $params[":id_client"] = $idClient;
+        }
+        if (isset($schema["deleted_at"])) {
+            $where .= " AND deleted_at IS NULL";
+        }
+        $existing = $db
+            ->createCommand("SELECT id FROM t_logbook_emr WHERE " . $where . " FOR UPDATE")
+            ->bindValues($params)
+            ->queryRow();
+        if ($existing) {
+            $this->updateLogbookBoundUpdate($db, "t_logbook_emr", $data, "id=:id", [":id" => (int) $existing["id"]]);
+            return;
+        }
+
+        $data["id_logbook"] = $idLogbook;
+        if (isset($schema["id_client"])) {
+            $data["id_client"] = $idClient;
+        }
+        if (isset($schema["created_date"])) {
+            $data["created_date"] = $now;
+        }
+        $db->createCommand()->insert("t_logbook_emr", $data);
+    }
+
+    /**
+     * Prasi saves verifier selections by action-role.  The mobile form sends
+     * real IDs from metadata; changing a pending/revised assignment resets only
+     * that slot to pending and never rewrites an unrelated verifier row.
+     */
+    private function updateLogbookUpdateVerifierAssignments($db, $rows, $action, $idLogbook, $idClient, $now)
+    {
+        if (!is_array($rows)) {
+            throw new CHttpException(422, "Status verifier tidak valid.");
+        }
+        $schema = $this->updateLogbookSchema($db, "t_logbook_status", false);
+        if (
+            !$schema ||
+            !isset($schema["id"]) ||
+            !isset($schema["id_logbook"]) ||
+            !isset($schema["id_user"]) ||
+            !isset($schema["id_action_role"])
+        ) {
+            throw new CHttpException(422, "Status verifier tidak didukung oleh schema.");
+        }
+        foreach ($rows as $row) {
+            if (
+                !is_array($row) ||
+                !$this->updateLogbookPositiveId(isset($row["id_user"]) ? $row["id_user"] : null) ||
+                !$this->updateLogbookPositiveId(isset($row["id_action_role"]) ? $row["id_action_role"] : null)
+            ) {
+                throw new CHttpException(422, "Status verifier tidak valid.");
+            }
+            $rolemap = $db
+                ->createCommand(
+                    "SELECT arm.id FROM m_action_rolemap arm INNER JOIN m_action_role ar ON ar.id=arm.id_action_role WHERE arm.id_action=:action AND arm.id_action_role=:role AND ar.id_client=:client",
+                )
+                ->bindValues([
+                    ":action" => (int) $action["id"],
+                    ":role" => (int) $row["id_action_role"],
+                    ":client" => $idClient,
+                ])
+                ->queryRow();
+            if (!$rolemap) {
+                throw new CHttpException(422, "Rolemap verifier tidak tersedia untuk action ini.");
+            }
+            $user = $db
+                ->createCommand(
+                    "SELECT u.id FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE u.id=:user AND u.id_client=:client AND LOWER(TRIM(r.name)) IN ('staff', 'staff jejaring')",
+                )
+                ->bindValues([":user" => (int) $row["id_user"], ":client" => $idClient])
+                ->queryRow();
+            if (!$user) {
+                throw new CHttpException(422, "Verifier bukan staff aktif yang diizinkan.");
+            }
+
+            $where = "id_logbook=:id_logbook AND id_action_role=:role";
+            $params = [":id_logbook" => $idLogbook, ":role" => (int) $row["id_action_role"]];
+            if (isset($schema["id_client"])) {
+                $where .= " AND id_client=:id_client";
+                $params[":id_client"] = $idClient;
+            }
+            if (isset($schema["deleted_at"])) {
+                $where .= " AND deleted_at IS NULL";
+            }
+            $existing = $db
+                ->createCommand("SELECT * FROM t_logbook_status WHERE " . $where . " FOR UPDATE")
+                ->bindValues($params)
+                ->queryRow();
+            if ($existing) {
+                if ((int) $existing["id_user"] === (int) $row["id_user"]) {
+                    continue;
+                }
+                $oldStatus = strtolower((string) (isset($existing["status"]) ? $existing["status"] : "pending"));
+                if ($oldStatus === "verified") {
+                    throw new CHttpException(409, "Verifier yang sudah verified tidak dapat diganti.");
+                }
+                $data = ["id_user" => (int) $row["id_user"]];
+                if (isset($schema["status"])) {
+                    $data["status"] = "pending";
+                }
+                if (isset($schema["date_time"])) {
+                    $data["date_time"] = $now;
+                }
+                if (isset($schema["verify_notes"])) {
+                    $data["verify_notes"] = null;
+                }
+                if (isset($schema["reject_notes"])) {
+                    $data["reject_notes"] = null;
+                }
+                $this->updateLogbookBoundUpdate($db, "t_logbook_status", $data, "id=:id", [
+                    ":id" => (int) $existing["id"],
+                ]);
+                continue;
+            }
+            $data = [
+                "id_logbook" => $idLogbook,
+                "id_user" => (int) $row["id_user"],
+                "id_action_role" => (int) $row["id_action_role"],
+            ];
+            if (isset($schema["id_client"])) {
+                $data["id_client"] = $idClient;
+            }
+            if (isset($schema["status"])) {
+                $data["status"] = "pending";
+            }
+            if (isset($schema["date_time"])) {
+                $data["date_time"] = $now;
+            }
+            $db->createCommand()->insert("t_logbook_status", $data);
+        }
+    }
+
+    private function updateLogbookServerIssuedChildren($db, $table, $rows, $allowed, $idLogbook, $idClient, $now)
+    {
+        if (!$this->updateLogbookServerIssuedRows($rows)) {
+            throw new CHttpException(422, "Perubahan child tidak diizinkan.");
+        }
+        $schema = $this->updateLogbookSchema($db, $table, false);
+        if (!$schema || !isset($schema["id"]) || !isset($schema["id_logbook"])) {
+            throw new CHttpException(422, "Child tidak didukung oleh schema.");
+        }
+        foreach ($rows as $row) {
+            $lockedWhere = "id=:id AND id_logbook=:id_logbook";
+            $lockedParams = [":id" => (int) $row["id"], ":id_logbook" => $idLogbook];
+            if (isset($schema["id_client"])) {
+                $lockedWhere .= " AND id_client=:id_client";
+                $lockedParams[":id_client"] = $idClient;
+            }
+            $owned = $db
+                ->createCommand('SELECT id FROM "' . $table . '" WHERE ' . $lockedWhere . " FOR UPDATE")
+                ->bindValues($lockedParams)
+                ->queryRow();
+            if (!$owned) {
+                throw new CHttpException(422, "Child tidak valid.");
+            }
+            $data = [];
+            foreach ($allowed as $field) {
+                if (array_key_exists($field, $row) && isset($schema[$field])) {
+                    if ($row[$field] !== null && !is_scalar($row[$field])) {
+                        throw new CHttpException(422, "Child tidak valid.");
+                    }
+                    $data[$field] = $row[$field];
+                }
+            }
+            if (isset($schema["updated_date"])) {
+                $data["updated_date"] = $now;
+            }
+            if ($data) {
+                $this->updateLogbookBoundUpdate($db, $table, $data, $lockedWhere, $lockedParams);
+            }
+        }
+    }
+    private function updateLogbookServerIssuedRows($rows)
+    {
+        if (!is_array($rows)) {
+            return false;
+        }
+        foreach ($rows as $row) {
+            if (
+                !is_array($row) ||
+                !$this->updateLogbookPositiveId(isset($row["id"]) ? $row["id"] : null) ||
+                empty($row["server_issued"])
+            ) {
+                return false;
+            }
+        }
+        return true;
+    }
+    private function updateLogbookBoundUpdate($db, $table, $data, $where, $whereParams)
+    {
+        $sets = [];
+        $params = $whereParams;
+        $i = 0;
+        foreach ($data as $column => $value) {
+            $key = ":value_" . $i++;
+            $sets[] = '"' . $column . '"=' . $key;
+            $params[$key] = $value;
+        }
+        $db->createCommand('UPDATE "' . $table . '" SET ' . implode(",", $sets) . " WHERE " . $where)->execute($params);
+    }
+    private function updateLogbookSchema($db, $table, $required = true)
+    {
+        $schema = $db->schema->getTable($table);
+        if (!$schema) {
+            if ($required) {
+                throw new RuntimeException("Required schema is unavailable.");
+            }
+            return [];
+        }
+        $out = [];
+        foreach ($schema->columns as $name => $column) {
+            $out[$name] = true;
+        }
+        return $out;
+    }
+    private function updateLogbookPositiveId($value)
+    {
+        return is_scalar($value) && preg_match('/^[1-9][0-9]*$/', (string) $value) === 1;
+    }
+    private function updateLogbookNullableId($value)
+    {
+        if ($value === null || $value === "") {
+            return null;
+        }
+        if (!$this->updateLogbookPositiveId($value)) {
+            throw new CHttpException(422, "ID tidak valid.");
+        }
+        return (int) $value;
+    }
+    private function updateLogbookBool($value)
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if ($value === "0" || $value === 0) {
+            return false;
+        }
+        if ($value === "1" || $value === 1) {
+            return true;
+        }
+        throw new CHttpException(422, "Boolean tidak valid.");
+    }
+    private function updateLogbookDate($value)
+    {
+        if (!is_string($value)) {
+            return false;
+        }
+        foreach (["!Y-m-d", "!Y-m-d H:i:s"] as $format) {
+            $d = DateTime::createFromFormat($format, $value);
+            if ($d && $d->format(ltrim($format, "!")) === $value) {
+                return true;
+            }
+        }
+        return false;
+    }
+    private function updateLogbookFlag($action, $field)
+    {
+        return isset($action[$field]) &&
+            in_array(strtolower((string) $action[$field]), ["1", "true", "t", "yes", "y"], true);
+    }
+    private function updateLogbookJson($success, $message, $status, $data = null)
+    {
+        if (!headers_sent()) {
+            http_response_code($status);
+        }
+        $out = ["success" => (bool) $success, "message" => $message];
+        if ($data !== null) {
+            $out["data"] = $data;
+        }
+        echo json_encode($out);
+        Yii::app()->end();
+    }
+
+    // delete logbokkkkkkkkkkkkkkkkkkkkkk
+    public function actionArchiveLogbook()
+    {
+        header("Content-Type: application/json; charset=utf-8");
+        $payload = json_decode(file_get_contents("php://input"), true);
+        if (!is_array($payload)) {
+            return $this->deleteLogbookJson(false, "Payload JSON tidak valid.", 400);
+        }
+        foreach (["id", "created_by", "id_client"] as $field) {
+            if (!$this->deleteLogbookPositiveId(isset($payload[$field]) ? $payload[$field] : null)) {
+                return $this->deleteLogbookJson(false, "Permintaan tidak valid.", 422);
+            }
+        }
+        $db = Yii::app()->dbPrasi;
+        $transaction = null;
+        try {
+            $transaction = $db->beginTransaction();
+            $actor = $this->deleteLogbookActor($db, $payload);
+            $parent = $this->deleteLogbookLockedParent(
+                $db,
+                (int) $payload["id"],
+                (int) $actor["id_client"],
+                (int) $actor["id"],
+            );
+            $now = date("Y-m-d H:i:s");
+            $this->deleteLogbookSoftDeleteChildren($db, (int) $parent["id"], (int) $actor["id_client"], $now);
+            $parentSchema = $this->deleteLogbookSchema($db, "t_logbook");
+            if (!isset($parentSchema["deleted_at"])) {
+                throw new RuntimeException("Soft-delete schema is unavailable.");
+            }
+            $data = ["deleted_at" => $now];
+            if (isset($parentSchema["updated_date"])) {
+                $data["updated_date"] = $now;
+            }
+            $this->deleteLogbookBoundUpdate(
+                $db,
+                "t_logbook",
+                $data,
+                "id=:id AND id_client=:id_client AND id_user=:actor_id AND created_by=:actor_id AND deleted_at IS NULL",
+                [
+                    ":id" => (int) $parent["id"],
+                    ":id_client" => (int) $actor["id_client"],
+                    ":actor_id" => (int) $actor["id"],
+                ],
+            );
+            $transaction->commit();
+            return $this->deleteLogbookJson(true, "Logbook berhasil dihapus.", 200, ["id" => (int) $parent["id"]]);
+        } catch (CHttpException $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            return $this->deleteLogbookJson(false, $e->getMessage(), $e->statusCode);
+        } catch (Throwable $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            Yii::log("DeleteLogbook failed: " . $e->getMessage(), CLogger::LEVEL_ERROR, "api.logbook");
+            return $this->deleteLogbookJson(false, "Gagal menghapus logbook.", 500);
+        }
+    }
+
+    private function deleteLogbookActor($db, $payload)
+    {
+        $columns = $this->deleteLogbookSchema($db, "m_user");
+        $where = "u.id=:id AND u.id_client=:id_client AND LOWER(r.name) = :ppds_role";
+        if (isset($columns["deleted_at"])) {
+            $where .= " AND u.deleted_at IS NULL";
+        }
+        $actor = $db
+            ->createCommand(
+                "SELECT u.id,u.id_client FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE " . $where,
+            )
+            ->bindValues([
+                ":id" => (int) $payload["created_by"],
+                ":id_client" => (int) $payload["id_client"],
+                ":ppds_role" => "ppds",
+            ])
+            ->queryRow();
+        if (!$actor) {
+            throw new CHttpException(403, "Akses tidak diizinkan.");
+        }
+        return $actor;
+    }
+
+    private function deleteLogbookLockedParent($db, $id, $idClient, $actorId)
+    {
+        $columns = $this->deleteLogbookSchema($db, "t_logbook");
+        foreach (["id", "id_client", "id_user", "created_by", "deleted_at"] as $column) {
+            if (!isset($columns[$column])) {
+                throw new RuntimeException("Required logbook schema is unavailable.");
+            }
+        }
+        $where =
+            "lb.id=:id AND lb.id_client = :id_client AND lb.id_user = :actor_id AND lb.created_by = :actor_id AND lb.deleted_at IS NULL";
+        if (isset($columns["verified_status"])) {
+            $where .= " AND LOWER(COALESCE(lb.verified_status, 'pending')) IN ('pending','revised','rejected')";
+        }
+        $statusColumns = $this->deleteLogbookSchema($db, "t_logbook_status", false);
+        if ($statusColumns && isset($statusColumns["id_logbook"]) && isset($statusColumns["status"])) {
+            $where .=
+                " AND NOT EXISTS (SELECT 1 FROM t_logbook_status s WHERE s.id_logbook=lb.id" .
+                (isset($statusColumns["id_client"]) ? " AND s.id_client=lb.id_client" : "") .
+                (isset($statusColumns["deleted_at"]) ? " AND s.deleted_at IS NULL" : "") .
+                " AND LOWER(COALESCE(s.status, 'pending')) NOT IN ('pending','revised','rejected'))";
+        }
+        $parent = $db
+            ->createCommand("SELECT lb.* FROM t_logbook lb WHERE " . $where . " FOR UPDATE")
+            ->bindValues([":id" => $id, ":id_client" => $idClient, ":actor_id" => $actorId])
+            ->queryRow();
+        if (!$parent) {
+            throw new CHttpException(403, "Logbook tidak dapat dihapus.");
+        }
+        return $parent;
+    }
+
+    private function deleteLogbookSoftDeleteChildren($db, $idLogbook, $idClient, $now)
+    {
+        foreach (["t_logbook_attachment", "t_logbook_asm", "t_logbook_emr", "t_logbook_status", "t_notif"] as $table) {
+            $columns = $this->deleteLogbookSchema($db, $table, false);
+            // Do not guess a foreign key: skip tables that lack the established relation
+            // or soft-delete column. All table names are fixed backend constants.
+            if (!$columns || !isset($columns["id_logbook"]) || !isset($columns["deleted_at"])) {
+                continue;
+            }
+            $data = ["deleted_at" => $now];
+            if (isset($columns["updated_date"])) {
+                $data["updated_date"] = $now;
+            }
+            $where = "id_logbook=:id_logbook";
+            $params = [":id_logbook" => $idLogbook];
+            if (isset($columns["id_client"])) {
+                $where .= " AND id_client=:id_client";
+                $params[":id_client"] = $idClient;
+            }
+            $where .= " AND deleted_at IS NULL";
+            $this->deleteLogbookBoundUpdate($db, $table, $data, $where, $params);
+        }
+    }
+
+    private function deleteLogbookBoundUpdate($db, $table, $data, $where, $whereParams)
+    {
+        $sets = [];
+        $params = $whereParams;
+        $i = 0;
+        foreach ($data as $column => $value) {
+            $key = ":value_" . $i++;
+            $sets[] = '"' . $column . '"=' . $key;
+            $params[$key] = $value;
+        }
+        $db->createCommand('UPDATE "' . $table . '" SET ' . implode(",", $sets) . " WHERE " . $where)->execute($params);
+    }
+    private function deleteLogbookSchema($db, $table, $required = true)
+    {
+        $schema = $db->schema->getTable($table);
+        if (!$schema) {
+            if ($required) {
+                throw new RuntimeException("Required schema is unavailable.");
+            }
+            return [];
+        }
+        $out = [];
+        foreach ($schema->columns as $name => $column) {
+            $out[$name] = true;
+        }
+        return $out;
+    }
+    private function deleteLogbookPositiveId($value)
+    {
+        return is_scalar($value) && preg_match('/^[1-9][0-9]*$/', (string) $value) === 1;
+    }
+    private function deleteLogbookJson($success, $message, $status, $data = null)
+    {
+        if (!headers_sent()) {
+            http_response_code($status);
+        }
+        $out = ["success" => (bool) $success, "message" => $message];
+        if ($data !== null) {
+            $out["data"] = $data;
+        }
+        echo json_encode($out);
+        Yii::app()->end();
+    }
+
+    // ini adalah verifieddddddddddddddddddddddddddddddddddddd
+    public function actionUpdateLogbookStatus()
+    {
+        header("Content-Type: application/json; charset=utf-8");
+
+        $post = json_decode(file_get_contents("php://input"), true);
+        if (!is_array($post)) {
+            return $this->logbookStatusJson(false, "Payload JSON tidak valid");
+        }
+
+        foreach (["id_logbook", "id_user", "id_action_role", "id_client"] as $field) {
+            if (!isset($post[$field]) || !$this->logbookStatusIsPositiveNumericId($post[$field])) {
+                return $this->logbookStatusJson(false, $field . " wajib berupa angka positif");
+            }
+        }
+
+        $status = isset($post["status"]) && is_string($post["status"]) ? strtolower(trim($post["status"])) : null;
+        if (!in_array($status, ["verified", "rejected", "revised"], true)) {
+            return $this->logbookStatusJson(false, "Status tidak valid. Pilih: verified, rejected, revised");
+        }
+
+        foreach (["verify_notes", "reject_notes", "notes"] as $field) {
+            if (isset($post[$field]) && !is_scalar($post[$field])) {
+                return $this->logbookStatusJson(false, $field . " harus berupa teks");
+            }
+        }
+
+        $db = Yii::app()->dbPrasi;
+        $transaction = null;
+        try {
+            /* Introspection is optional so older deployments without the dedicated note columns still work. */
+            $statusColumns = $this->logbookStatusColumns($db, "t_logbook_status");
+            $logbookColumns = $this->logbookStatusColumns($db, "t_logbook");
+            // `notes` is part of the established status-table protocol; only
+            // the newer dedicated note columns are optional.
+            $statusColumns["notes"] = true;
+            $transaction = $db->beginTransaction();
+
+            $parentWhere = "lb.id = :id_logbook AND ma.id_client = :id_client";
+            if (isset($logbookColumns["deleted_at"])) {
+                $parentWhere .= " AND lb.deleted_at IS NULL";
+            }
+            $parent = $db
+                ->createCommand(
+                    "SELECT lb.id, lb.verified, lb.verified_status " .
+                        "FROM t_logbook lb INNER JOIN m_action ma ON ma.id = lb.id_action " .
+                        "WHERE " .
+                        $parentWhere .
+                        " FOR UPDATE",
+                )
+                ->bindValues([
+                    ":id_logbook" => (string) $post["id_logbook"],
+                    ":id_client" => (string) $post["id_client"],
+                ])
+                ->queryRow();
+
+            if (!$parent) {
+                throw new RuntimeException("Logbook tidak ditemukan untuk client ini");
+            }
+
+            /* The complete natural key is mandatory: never fall back to a first row or a supplied row ID. */
+            $targetWhere = "id_logbook = :id_logbook AND id_user = :id_user AND id_action_role = :id_action_role";
+            if (isset($statusColumns["id_client"])) {
+                $targetWhere .= " AND id_client = :id_client";
+            }
+            $targetParams = [
+                ":id_logbook" => (string) $post["id_logbook"],
+                ":id_user" => (string) $post["id_user"],
+                ":id_action_role" => (string) $post["id_action_role"],
+            ];
+            if (isset($statusColumns["id_client"])) {
+                $targetParams[":id_client"] = (string) $post["id_client"];
+            }
+            $targetRows = $db
+                ->createCommand("SELECT id FROM t_logbook_status WHERE " . $targetWhere . " FOR UPDATE")
+                ->bindValues($targetParams)
+                ->queryAll();
+
+            if (count($targetRows) !== 1) {
+                throw new RuntimeException("Status verifier tidak ditemukan atau tidak unik");
+            }
+            $targetId = $targetRows[0]["id"];
+
+            $assignments = ["status = :status"];
+            $params = [
+                ":status" => $status,
+                ":status_id" => $targetId,
+                ":id_logbook" => (string) $post["id_logbook"],
+                ":id_user" => (string) $post["id_user"],
+                ":id_action_role" => (string) $post["id_action_role"],
+            ];
+            if (isset($statusColumns["date_time"])) {
+                $assignments[] = "date_time = CURRENT_TIMESTAMP";
+            }
+            if (
+                $status === "verified" &&
+                isset($statusColumns["verify_notes"]) &&
+                array_key_exists("verify_notes", $post)
+            ) {
+                $assignments[] = "verify_notes = :verify_notes";
+                $params[":verify_notes"] = $post["verify_notes"];
+            }
+            if ($status === "rejected") {
+                if (isset($statusColumns["reject_notes"]) && array_key_exists("reject_notes", $post)) {
+                    $assignments[] = "reject_notes = :reject_notes";
+                    $params[":reject_notes"] = $post["reject_notes"];
+                }
+                if (isset($statusColumns["notes"]) && array_key_exists("notes", $post)) {
+                    $assignments[] = "notes = :notes";
+                    $params[":notes"] = $post["notes"];
+                }
+            }
+
+            $updated = $db
+                ->createCommand(
+                    "UPDATE t_logbook_status SET " .
+                        implode(", ", $assignments) .
+                        " WHERE id = :status_id AND id_logbook = :id_logbook" .
+                        " AND id_user = :id_user AND id_action_role = :id_action_role",
+                )
+                ->execute($params);
+            if ($updated !== 1) {
+                throw new RuntimeException("Status verifier gagal diupdate");
+            }
+
+            $allWhere = "id_logbook = :id_logbook";
+            $allRows = $db
+                ->createCommand("SELECT status FROM t_logbook_status WHERE " . $allWhere . " FOR UPDATE")
+                ->bindValue(":id_logbook", (string) $post["id_logbook"])
+                ->queryAll();
+            if (!$allRows) {
+                throw new RuntimeException("Tidak ada status verifier untuk logbook");
+            }
+
+            $allVerified = true;
+            $allRejected = true;
+            foreach ($allRows as $row) {
+                $allVerified = $allVerified && $row["status"] === "verified";
+                $allRejected = $allRejected && $row["status"] === "rejected";
+            }
+            if ($allVerified) {
+                $parentVerified = true;
+                $parentStatus = "verified";
+            } elseif ($allRejected) {
+                $parentVerified = false;
+                $parentStatus = "rejected";
+            } else {
+                $parentVerified = false;
+                $parentStatus = $status === "revised" ? "revised" : "pending";
+            }
+
+            $db->createCommand(
+                "UPDATE t_logbook SET verified = :verified, verified_status = :verified_status WHERE id = :id_logbook",
+            )->execute([
+                ":verified" => $parentVerified ? "true" : "false",
+                ":verified_status" => $parentStatus,
+                ":id_logbook" => (string) $post["id_logbook"],
+            ]);
+
+            $returnColumns = ["id", "id_user", "id_action_role", "status"];
+            foreach (["notes", "verify_notes", "reject_notes"] as $column) {
+                if (isset($statusColumns[$column])) {
+                    $returnColumns[] = $column;
+                }
+            }
+            $returnedStatuses = $db
+                ->createCommand(
+                    "SELECT " .
+                        implode(", ", $returnColumns) .
+                        " FROM t_logbook_status WHERE " .
+                        $allWhere .
+                        " ORDER BY id",
+                )
+                ->bindValue(":id_logbook", (string) $post["id_logbook"])
+                ->queryAll();
+
+            $transaction->commit();
+            return $this->logbookStatusJson(true, "Status logbook berhasil diupdate", [
+                "parent" => [
+                    "id" => $parent["id"],
+                    "verified" => $parentVerified,
+                    "verified_status" => $parentStatus,
+                ],
+                "t_logbook_status" => $returnedStatuses,
+            ]);
+        } catch (Throwable $e) {
+            if ($transaction !== null && $transaction->active) {
+                $transaction->rollback();
+            }
+            Yii::log("Update logbook status failed: " . $e->getMessage(), CLogger::LEVEL_ERROR, "api.logbook");
+            return $this->logbookStatusJson(false, "Gagal memperbarui status logbook");
+        }
+    }
+
+    private function logbookStatusIsPositiveNumericId($value)
+    {
+        return is_scalar($value) && preg_match('/^[1-9][0-9]*$/', (string) $value) === 1;
+    }
+
+    private function logbookStatusColumns($db, $table)
+    {
+        try {
+            $rows = $db
+                ->createCommand(
+                    "SELECT column_name FROM information_schema.columns " .
+                        "WHERE table_name = :table_name AND table_schema = ANY(current_schemas(false))",
+                )
+                ->bindValue(":table_name", $table)
+                ->queryAll();
+            $columns = [];
+            foreach ($rows as $row) {
+                $columns[$row["column_name"]] = true;
+            }
+            return $columns;
+        } catch (Throwable $e) {
+            Yii::log(
+                "Cannot inspect columns for " . $table . ": " . $e->getMessage(),
+                CLogger::LEVEL_WARNING,
+                "api.logbook",
+            );
+            return [];
+        }
+    }
+
+    private function logbookStatusJson($success, $message, $data = null)
+    {
+        $response = ["success" => $success, "message" => $message];
+        if ($data !== null) {
+            $response["data"] = $data;
+        }
+        echo json_encode($response);
+        Yii::app()->end();
+    }
+
+    // menampilkan dynamic logbook Field
+
+    public function actionGetLogbookFormMetadata()
+    {
+        header("Content-Type: application/json");
+
+        $post = json_decode(file_get_contents("php://input"), true);
+        if (!is_array($post)) {
+            $this->logbookMetadataResponse(false, "Payload JSON tidak valid.", null, 400);
+            return;
+        }
+
+        foreach (["id_client", "id_action"] as $field) {
+            if (!isset($post[$field]) || !is_numeric($post[$field]) || (int) $post[$field] <= 0) {
+                $this->logbookMetadataResponse(false, $field . " wajib berupa angka positif.", null, 422);
+                return;
+            }
+        }
+
+        $idClient = (int) $post["id_client"];
+        $idAction = (int) $post["id_action"];
+        $db = Yii::app()->dbPrasi;
+
+        try {
+            // m_action pada backend acuan dimiliki client melalui m_action_type.
+            // ma.* sengaja dikembalikan agar seluruh flag has_* tersedia tanpa
+            // membuat endpoint baru setiap ada field action baru.
+            $action = $db
+                ->createCommand(
+                    '
+            SELECT ma.*, mat.name AS action_type_name
+            FROM m_action ma
+            INNER JOIN m_action_type mat ON mat.id = ma.id_type
+            WHERE ma.id = :id_action
+              AND ma.id_client = :id_client
+        ',
+                )
+                ->bindValues([
+                    ":id_action" => $idAction,
+                    ":id_client" => $idClient,
+                ])
+                ->queryRow();
+
+            if (!$action) {
+                $this->logbookMetadataResponse(false, "Action tidak ditemukan untuk client ini.", null, 404);
+                return;
+            }
+
+            // Role/verifier yang terikat langsung ke action.
+            $rolemaps = $db
+                ->createCommand(
+                    '
+            SELECT
+                arm.*,
+                ar.id AS action_role_id,
+                ar.role,
+                ar.identifier,
+                ar.id_client AS action_role_id_client
+            FROM m_action_rolemap arm
+            INNER JOIN m_action_role ar ON ar.id = arm.id_action_role
+            WHERE arm.id_action = :id_action
+              AND ar.id_client = :id_client
+            ORDER BY arm.id ASC
+        ',
+                )
+                ->bindValues([
+                    ":id_action" => $idAction,
+                    ":id_client" => $idClient,
+                ])
+                ->queryAll();
+
+            // Some older tenant schemas predate these soft-delete/status fields.
+            // Feature-detect them so metadata remains available during rollout.
+            $userSchema = $db->schema->getTable("m_user");
+            $staseSchema = $db->schema->getTable("m_stase");
+            // FormLogbook Prasi tidak pernah mengisi Staff Pengajar dari seluruh
+            // m_user. Untuk aktivitas biasa pilih role persis "staff"; Morbiditas
+            // boleh menambahkan "staff jejaring". Ini mencegah admin/institusi ikut
+            // tampil di dropdown Staff Pengajar.
+            $actionText = strtolower(
+                trim(
+                    (isset($action["identifier"]) ? $action["identifier"] : "") .
+                        " " .
+                        (isset($action["name"]) ? $action["name"] : "") .
+                        " " .
+                        (isset($action["action_name"]) ? $action["action_name"] : ""),
+                ),
+            );
+            $isMorbiditas = strpos($actionText, "morbid") !== false;
+            $staffWhere = ["u.id_client = :id_client"];
+            if ($userSchema && isset($userSchema->columns["status"])) {
+                $staffWhere[] = "LOWER(u.status) = 'active'";
+            }
+            if ($userSchema && isset($userSchema->columns["deleted_at"])) {
+                $staffWhere[] = "u.deleted_at IS NULL";
+            }
+            // PostgreSQL memakai tipe boolean, bukan integer 1/0.
+            if ($userSchema && isset($userSchema->columns["is_show"])) {
+                $staffWhere[] = "(u.is_show IS NULL OR u.is_show IS TRUE)";
+            }
+            if ($userSchema && isset($userSchema->columns["is_deleted"])) {
+                $staffWhere[] = "(u.is_deleted IS NULL OR u.is_deleted IS FALSE)";
+            }
+            $staffRoleClause = $isMorbiditas
+                ? "(LOWER(TRIM(r.name)) = 'staff' OR LOWER(TRIM(r.name)) = 'staff jejaring')"
+                : "LOWER(TRIM(r.name)) = 'staff'";
+            $staffUsers = $db
+                ->createCommand(
+                    '
+            SELECT u.id, u.display_name, u.username, u.id_role
+            FROM m_user u
+            INNER JOIN m_role r ON r.id = u.id_role
+            WHERE ' .
+                        implode(" AND ", $staffWhere) .
+                        '
+              AND ' .
+                        $staffRoleClause .
+                        '
+            ORDER BY u.display_name ASC, u.username ASC
+        ',
+                )
+                ->bindValue(":id_client", $idClient)
+                ->queryAll();
+
+            $jejaringWhere = ["u.id_client = :id_client", "LOWER(TRIM(r.name)) = 'staff jejaring'"];
+            if ($userSchema && isset($userSchema->columns["status"])) {
+                $jejaringWhere[] = "LOWER(u.status) = 'active'";
+            }
+            if ($userSchema && isset($userSchema->columns["deleted_at"])) {
+                $jejaringWhere[] = "u.deleted_at IS NULL";
+            }
+            if ($userSchema && isset($userSchema->columns["is_show"])) {
+                $jejaringWhere[] = "(u.is_show IS NULL OR u.is_show IS TRUE)";
+            }
+            if ($userSchema && isset($userSchema->columns["is_deleted"])) {
+                $jejaringWhere[] = "(u.is_deleted IS NULL OR u.is_deleted IS FALSE)";
+            }
+            $staffJejaringUsers = $db
+                ->createCommand(
+                    '
+            SELECT u.id, u.display_name, u.username
+            FROM m_user u
+            INNER JOIN m_role r ON r.id = u.id_role
+            WHERE ' .
+                        implode(" AND ", $jejaringWhere) .
+                        '
+            ORDER BY u.display_name ASC, u.username ASC
+        ',
+                )
+                ->bindValue(":id_client", $idClient)
+                ->queryAll();
+
+            foreach ($rolemaps as &$rolemap) {
+                $rolemap["id_action_role"] = (int) $rolemap["action_role_id"];
+                $rolemap["m_action_role"] = [
+                    "id" => (int) $rolemap["action_role_id"],
+                    "role" => $rolemap["role"],
+                    "identifier" => $rolemap["identifier"],
+                ];
+                // ID staff dikirim agar mobile tidak pernah mengirim nama display sebagai ID.
+                $rolemap["users"] = $staffUsers;
+                unset(
+                    $rolemap["action_role_id"],
+                    $rolemap["role"],
+                    $rolemap["identifier"],
+                    $rolemap["action_role_id_client"],
+                );
+            }
+            unset($rolemap);
+
+            $categories = $db
+                ->createCommand(
+                    '
+            SELECT id, name, required_asm
+            FROM m_action_category
+            WHERE id_action = :id_action
+              AND id_client = :id_client
+            ORDER BY name ASC
+        ',
+                )
+                ->bindValues([
+                    ":id_action" => $idAction,
+                    ":id_client" => $idClient,
+                ])
+                ->queryAll();
+
+            $anotherRoles = $db
+                ->createCommand(
+                    '
+            SELECT
+                maar.id_action,
+                maar.id_another_role,
+                maar.required_asm,
+                mar.id,
+                mar.role_name AS name
+            FROM m_action_another_role maar
+            INNER JOIN m_another_role mar ON mar.id = maar.id_another_role
+            WHERE maar.id_action = :id_action
+              AND mar.id_client = :id_client
+            ORDER BY mar.role_name ASC
+        ',
+                )
+                ->bindValues([
+                    ":id_action" => $idAction,
+                    ":id_client" => $idClient,
+                ])
+                ->queryAll();
+
+            $asmActions = $db
+                ->createCommand(
+                    '
+            SELECT
+                aa.id_action,
+                aa.id_asm_param,
+                ap.id,
+                ap.name,
+                ap.min_score,
+                ap.max_score
+            FROM m_asm_action aa
+            INNER JOIN m_asm_param ap ON ap.id = aa.id_asm_param
+            WHERE aa.id_action = :id_action
+            ORDER BY aa.id ASC
+        ',
+                )
+                ->bindValue(":id_action", $idAction)
+                ->queryAll();
+
+            foreach ($asmActions as &$asmAction) {
+                $asmAction["m_asm_param"] = [
+                    "id" => (int) $asmAction["id"],
+                    "name" => $asmAction["name"],
+                    "min_score" => $asmAction["min_score"],
+                    "max_score" => $asmAction["max_score"],
+                ];
+                unset($asmAction["id"], $asmAction["name"], $asmAction["min_score"], $asmAction["max_score"]);
+            }
+            unset($asmAction);
+
+            // This table does not consistently have a deleted_at column across
+            // deployments. Rows scoped to this action/client are the available
+            // score choices; do not add a soft-delete predicate here.
+            $scoreOptions = $db
+                ->createCommand(
+                    '
+            SELECT id, score
+            FROM m_score_option
+            WHERE id_action = :id_action
+              AND id_client = :id_client
+              AND score IS NOT NULL
+            ORDER BY score ASC, id ASC
+        ',
+                )
+                ->bindValues([
+                    ":id_action" => $idAction,
+                    ":id_client" => $idClient,
+                ])
+                ->queryAll();
+
+            foreach ($scoreOptions as &$scoreOption) {
+                $scoreOption["id"] = (int) $scoreOption["id"];
+                $scoreOption["score"] = (float) $scoreOption["score"];
+            }
+            unset($scoreOption);
+
+            $hospitals = $db
+                ->createCommand(
+                    '
+            SELECT id, name
+            FROM m_hospital
+            WHERE id_client = :id_client
+            ORDER BY name ASC
+        ',
+                )
+                ->bindValue(":id_client", $idClient)
+                ->queryAll();
+
+            $staseJejaringColumn =
+                $staseSchema && isset($staseSchema->columns["has_staff_jejaring"])
+                    ? "has_staff_jejaring"
+                    : "0 AS has_staff_jejaring";
+            $stases = $db
+                ->createCommand(
+                    '
+            SELECT id, name, id_stage, sequence, ' .
+                        $staseJejaringColumn .
+                        '
+            FROM m_stase
+            WHERE id_client = :id_client
+            ORDER BY sequence ASC, name ASC
+        ',
+                )
+                ->bindValue(":id_client", $idClient)
+                ->queryAll();
+
+            $action["id"] = (int) $action["id"];
+            $action["m_action_rolemap"] = $rolemaps;
+            $action["m_action_category"] = $categories;
+            $action["m_action_another_role"] = $anotherRoles;
+            $action["m_asm_action"] = $asmActions;
+            $action["score_options"] = $scoreOptions;
+            $action["hospitals"] = $hospitals;
+            $action["stases"] = $stases;
+            $action["staff_jejaring_users"] = $staffJejaringUsers;
+
+            $this->logbookMetadataResponse(true, "OK", $action, 200);
+        } catch (Throwable $e) {
+            Yii::log($e->getMessage(), CLogger::LEVEL_ERROR, "api.logbook.metadata");
+            $message =
+                defined("YII_DEBUG") && YII_DEBUG
+                    ? "Metadata error: " . $e->getMessage()
+                    : "Gagal memuat metadata form logbook.";
+            $this->logbookMetadataResponse(false, $message, null, 500);
+        }
+    }
+
+    private function logbookMetadataResponse($success, $message, $data = null, $statusCode = 200)
+    {
+        if (!headers_sent()) {
+            http_response_code($statusCode);
+        }
+
+        echo json_encode([
+            "success" => (bool) $success,
+            "message" => $message,
+            "data" => $data,
+        ]);
+        Yii::app()->end();
+    }
 }
