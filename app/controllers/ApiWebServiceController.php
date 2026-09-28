@@ -337,8 +337,8 @@ class ApiWebServiceController extends Controller {
                 FROM m_user mu
                 LEFT JOIN m_role mr ON mr.id = mu.id_role
                 WHERE
-                    mu.status     = :status 
-                -- AND mu.is_show    = :is_show
+                    mu.status IN (:status1, :status2)
+                AND mu.is_show    = :is_show
                 AND mu.deleted_at IS NULL 
                 AND mu.id_client  = :id_client
                 AND mr.name       = :role_name
@@ -346,8 +346,9 @@ class ApiWebServiceController extends Controller {
                     mu.display_name ASC';
         
         $res = Yii::app()->db->createCommand($sql)
-            ->bindValue(':status', 'Inactive')
-            // ->bindValue(':is_show', true)
+            ->bindValue(':status1', 'Inactive')
+            ->bindValue(':status2', 'Lulus')
+            ->bindValue(':is_show', true)
             ->bindValue(':id_client', $post['id_client'])
             ->bindValue(':role_name', $post['role_name'])
             ->queryAll();
@@ -555,6 +556,38 @@ class ApiWebServiceController extends Controller {
             'data'    => $res
         ]);
     }
+    
+    public function actionGetMasterHospital() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+        
+        if (!isset($post['id_client'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+        
+        $sql = 'SELECT
+                    mh.id,
+                    mh.name
+                FROM m_hospital mh
+                WHERE
+                    mh.id_client = :id_client
+                ORDER BY
+                    mh.name ASC';
+        
+        $res = Yii::app()->db->createCommand($sql)
+            ->bindValue(':id_client', $post['id_client'])
+            ->queryAll();
+        
+        echo json_encode([
+            'status'  => true,
+            'total'   => count($res),
+            'data'    => $res
+        ]);        
+    }
     // === MASTER STAGE ===
     
     
@@ -703,7 +736,7 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     
-    public function actionDeletePPDS() {
+    public function actionRemovePPDS() {
         // echo json_encode([
         //     'db' => Yii::app()->db->connectionString
         // ]);die;
@@ -844,6 +877,7 @@ class ApiWebServiceController extends Controller {
         $user->status         = $post['status'] ?? null;
         $user->inactive_at    = $post['inactive_at'] ?? null;
         $user->inactive_notes = $post['inactive_notes'] ?? null;
+        $user->reactivate_date = $post['reactivate_date'] ?? null;    
         
         if (!$user->save()) {
             echo json_encode([
@@ -1284,8 +1318,8 @@ class ApiWebServiceController extends Controller {
                 LEFT JOIN m_stase ms ON ms.id = mu.id_stase
                 WHERE 
                     mu.id_client  = :id_client
-                AND mu.status     = :status
-                -- AND mu.is_show    = :is_show
+                AND mu.status IN (:status1, :status2)
+                AND mu.is_show    = :is_show
                 AND mu.deleted_at IS NULL
                 AND mr.name       = :role_name';
         
@@ -1295,15 +1329,16 @@ class ApiWebServiceController extends Controller {
                     LEFT JOIN m_stase ms ON ms.id = mu.id_stase
                     WHERE 
                         mu.id_client  = :id_client
-                    AND mu.status     = :status
-                    -- AND mu.is_show    = :is_show
+                    AND mu.status IN (:status1, :status2)
+                    AND mu.is_show    = :is_show
                     AND mu.deleted_at IS NULL
                     AND mr.name       = :role_name';
     
         $params = [
             ':id_client' => $post['id_client'],
-            ':status'    => 'Inactive',
-            // ':is_show'   => true,
+            ':status1'   => 'Inactive',
+            ':status2'   => 'Lulus',
+            ':is_show'   => true,
             ':role_name' => 'ppds'
         ];
     
@@ -1415,6 +1450,7 @@ class ApiWebServiceController extends Controller {
                     mu.email,
                     mu.phone,
                     mu.address,
+                    mu.location,
                     mu.date_of_birth,
                     mu.code AS nim,
                     mr.name AS role_name,
@@ -1528,7 +1564,7 @@ class ApiWebServiceController extends Controller {
         ]);
     }
 
-    public function actionDeleteStaff() {
+    public function actionRemoveStaff() {
         // echo json_encode([
         //     'db' => Yii::app()->db->connectionString
         // ]);die;
@@ -1592,6 +1628,7 @@ class ApiWebServiceController extends Controller {
                     mu.email,
                     mu.phone,
                     mu.address,
+                    mu.location,
                     mu.date_of_birth,
                     mu.code AS nim,
                     mr.name AS role_name,
@@ -1663,6 +1700,7 @@ class ApiWebServiceController extends Controller {
         $user->email          = $post['email'];
         $user->phone          = $post['phone'];
         $user->address        = $post['address'] ?? null;
+        $user->location       = $post['location'] ?? null;
         $user->date_of_birth  = $post['date_of_birth'] ?? null;
         $user->code           = $post['nim'] ?? null;
         
@@ -1734,6 +1772,7 @@ class ApiWebServiceController extends Controller {
             $user->email          = $post['email'];
             $user->phone          = $post['phone'];
             $user->address        = $post['address'] ?? null;
+            $user->location       = $post['location'] ?? null;
             $user->date_of_birth  = $post['date_of_birth'] ?? null;
             $user->code           = $post['nim'] ?? null;
             $user->password       = password_hash($post['password'], PASSWORD_BCRYPT);
@@ -2056,7 +2095,8 @@ class ApiWebServiceController extends Controller {
                     mh.code
                 FROM m_hospital mh
                 WHERE
-                    mh.id_client = :id_client';
+                    mh.id_client = :id_client
+                    AND mh.deleted_at IS NULL';
         
         $countSql = 'SELECT COUNT(*)
                 FROM m_hospital mh
@@ -2115,11 +2155,11 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     
-    public function actionDeleteHospital() {
+    public function actionRemoveHospital() {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
         
-        if (!isset($post['id_hospital'])) {
+        if (!isset($post['id'])) {
             echo json_encode([
                 'status' => false,
                 'message' => 'Invalid parameter!'
@@ -2127,32 +2167,27 @@ class ApiWebServiceController extends Controller {
             Yii::app()->end();
         }
         
-        try {
-            $hospital = MHospital::model()->findByPk($post['id_hospital']);
-    
-            if (!$hospital) {
-                echo json_encode([
-                    'status' => false,
-                    'message' => 'Hospital not found!'
-                ]);
-                Yii::app()->end();
-            }
-    
-            if (!$hospital->delete()) {
-                echo json_encode([
-                    'status' => false,
-                    'message' => 'Failed to delete hospital!'
-                ]);
-                Yii::app()->end();
-            }
-    
+        $hospital = MHospital::model()->findByPk($post['id']);
+
+        if (!$hospital) {
             echo json_encode([
-                'status' => true,
-                'message' => 'Hospital deleted successfully!'
+                'status' => false,
+                'message' => 'Hospital not found!'
+            ]);
+            Yii::app()->end();
+        }
+
+        try {
+            $hospital->deleted_at = new CDbExpression('NOW()');
+            $hospital->save(false);
+
+            echo json_encode([
+                'status'  => true,
+                'message' => 'Data berhasil didelete!',
             ]);
         } catch (Exception $e) {
             echo json_encode([
-                'status' => false,
+                'status'  => false,
                 'message' => $e->getMessage()
             ]);
         }
@@ -2205,9 +2240,9 @@ class ApiWebServiceController extends Controller {
         $post = json_decode($rest_json, true);
 
        if (
-            !isset($post['id_hospital']) ||
+            !isset($post['id']) ||
             !isset($post['id_client']) ||
-            !isset($post['created_by']) ||
+            !isset($post['updated_by']) ||
             !isset($post['name']) ||
             !isset($post['code'])
         ) {
@@ -2218,7 +2253,7 @@ class ApiWebServiceController extends Controller {
             Yii::app()->end();
         }
 
-        $hospital = MHospital::model()->findByPk($post['id_hospital']);
+        $hospital = MHospital::model()->findByPk($post['id']);
 
         if (!$hospital) {
             echo json_encode([
@@ -2255,7 +2290,7 @@ class ApiWebServiceController extends Controller {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
 
-        if (!isset($post['id_hospital'])) {
+        if (!isset($post['id'])) {
             echo json_encode([
                 'status'  => false,
                 'message' => 'Invalid parameter!'
@@ -2272,10 +2307,10 @@ class ApiWebServiceController extends Controller {
                 mh.notes
             FROM m_hospital mh
             WHERE
-                mh.id = :id_hospital";
+                mh.id = :id";
 
         $command = Yii::app()->db->createCommand($sql);
-        $command->bindValue(':id_hospital', $post['id_hospital']);
+        $command->bindValue(':id', $post['id']);
         $data = $command->queryRow();
 
         if (!$data) {
@@ -2292,6 +2327,644 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     // === HOSPITAL ===
+    
+    // === MORBIDITY ===
+    public function actionGetListMorbidity() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        if (!isset($post['id_client'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+    
+        // pagination default
+        $page  = isset($post['page']) ? (int)$post['page'] : 1;
+        $limit = isset($post['limit']) ? (int)$post['limit'] : 10;
+        $offset = ($page - 1) * $limit;
+    
+        // sorting (default DESC)
+        $sort = (isset($post['sort']) && strtolower($post['sort']) === 'asc') ? 'ASC' : 'DESC';
+    
+        $sql = 'SELECT
+                    mph.id,
+                    mph.id_user,
+                    mph.id_stase,
+                    mph.id_semester,
+    
+                    mu.display_name,
+                    mu.code,
+    
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN (
+                                    tl.verified = TRUE
+                                    OR LOWER(COALESCE(tl.verified_status, \'\')) = \'verified\'
+                                )
+                                AND mac.points IS NOT NULL
+                                AND tl.created_date >= COALESCE(
+                                    mph.started_at,
+                                    \'1970-01-01\'::timestamptz
+                                )
+                                AND (
+                                    COALESCE(
+                                        mph.id_semester,
+                                        mu.id_semester,
+                                        0
+                                    ) = 0
+                                    OR tl.id_semester = COALESCE(
+                                        mph.id_semester,
+                                        mu.id_semester
+                                    )
+                                )
+                                THEN mac.points
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS poin_aktif,
+    
+                    COUNT(tl.id) AS jml_logbook,
+    
+                    COUNT(tl.id) FILTER (
+                        WHERE tl.verified = TRUE
+                           OR LOWER(COALESCE(tl.verified_status, \'\')) = \'verified\'
+                    ) AS verified
+    
+                FROM t_logbook tl
+    
+                JOIN m_user mu
+                    ON mu.id = tl.id_user
+    
+                JOIN m_action ma
+                    ON ma.id = tl.id_action
+                    AND ma.id_client = tl.id_client
+                    AND (
+                        LOWER(COALESCE(ma.identifier, \'\')) = \'morbiditas\'
+                        OR LOWER(COALESCE(ma.name, \'\')) = \'morbiditas\'
+                    )
+    
+                LEFT JOIN m_action_category mac
+                    ON mac.id = tl.id_category
+    
+                LEFT JOIN LATERAL (
+                    SELECT
+                        mph.id,
+                        mph.id_user,
+                        mph.id_stase,
+                        mph.id_semester,
+                        mph.started_at
+                    FROM t_morbiditas_points_history mph
+                    WHERE
+                        mph.id_user = tl.id_user
+                        AND mph.id_client = tl.id_client
+                        AND mph.ended_at IS NULL
+                    ORDER BY mph.id DESC
+                    LIMIT 1
+                ) mph ON TRUE
+    
+                WHERE
+                    tl.id_client = :id_client
+                    AND tl.deleted_at IS NULL
+    
+                GROUP BY
+                    mph.id,
+                    mph.id_user,
+                    mph.id_stase,
+                    mph.id_semester,
+                    mu.display_name,
+                    mu.code';
+    
+        // bungkus hasil GROUP BY supaya search bisa berdasarkan poin_aktif
+        $sql = "SELECT *
+                FROM (
+                    {$sql}
+                ) AS x";
+    
+        $countSql = "SELECT COUNT(*)
+                     FROM (
+                         {$sql}
+                     ) AS x";
+    
+        $params = [
+            ':id_client' => $post['id_client'],
+        ];
+    
+        // search filter
+        if (!empty($post['search'])) {
+            $sql .= ' WHERE (
+                display_name ILIKE :search
+                OR code ILIKE :search
+                OR CAST(poin_aktif AS TEXT) ILIKE :search
+            )';
+    
+            $countSql .= ' WHERE (
+                display_name ILIKE :search
+                OR code ILIKE :search
+                OR CAST(poin_aktif AS TEXT) ILIKE :search
+            )';
+    
+            $params[':search'] = '%' . $post['search'] . '%';
+        }
+    
+        // sorting + pagination
+        $sql .= " ORDER BY
+                    poin_aktif $sort,
+                    display_name ASC
+                LIMIT :limit
+                OFFSET :offset";
+    
+        $command      = Yii::app()->db->createCommand($sql);
+        $countCommand = Yii::app()->db->createCommand($countSql);
+    
+        foreach ($params as $key => $val) {
+            $command->bindValue($key, $val);
+            $countCommand->bindValue($key, $val);
+        }
+    
+        $command->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $command->bindValue(':offset', $offset, PDO::PARAM_INT);
+    
+        $res   = $command->queryAll();
+        $total = $countCommand->queryScalar();
+    
+        echo json_encode([
+            'status' => true,
+            'total'  => (int)$total,
+            'data'   => $res,
+            'pagination' => [
+                'page'  => $page,
+                'limit' => $limit,
+            ]
+        ]);
+    }
+    
+    public function actionGetListMorbidityByUser() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        if (!isset($post['id_client']) || !isset($post['id_user'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+    
+        $page   = isset($post['page']) ? (int)$post['page'] : 1;
+        $limit  = isset($post['limit']) ? (int)$post['limit'] : 10;
+        $offset = ($page - 1) * $limit;
+    
+        $sort = (isset($post['sort']) && strtolower($post['sort']) === 'asc')
+            ? 'ASC'
+            : 'DESC';
+    
+        $baseSql = 'SELECT
+                        l.id,
+                        u.display_name,
+    
+                        COALESCE(emr.patient_name, \'-\') AS patient_name,
+    
+                        l.date,
+    
+                        COALESCE(sem.name, \'-\') AS semester,
+    
+                        CASE
+                            WHEN cat.points IS NOT NULL
+                                THEN cat.name || \' (\' || cat.points || \')\'
+                            ELSE COALESCE(cat.name, \'-\')
+                        END AS category,
+    
+                        COALESCE(pelapor.display_name, \'-\') AS staff_pelapor,
+                        COALESCE(penilai.display_name, \'-\') AS staff_penilai,
+                        COALESCE(kps.display_name, \'-\') AS staff_kps,
+    
+                        CASE
+                            WHEN l.verified = TRUE
+                                OR LOWER(COALESCE(l.verified_status, \'\')) = \'verified\'
+                                THEN \'Verified\'
+    
+                            WHEN LOWER(COALESCE(l.verified_status, \'\')) = \'rejected\'
+                                THEN \'Rejected\'
+    
+                            WHEN LOWER(COALESCE(l.verified_status, \'\')) = \'revised\'
+                                THEN \'Revised\'
+    
+                            WHEN LOWER(COALESCE(l.verified_status, \'\')) = \'pending\'
+                                THEN \'Pending\'
+    
+                            ELSE COALESCE(l.verified_status, \'-\')
+                        END AS status
+    
+                    FROM t_logbook l
+    
+                    JOIN m_user u
+                        ON u.id = l.id_user
+    
+                    JOIN m_action ma
+                        ON ma.id = l.id_action
+                        AND ma.id_client = l.id_client
+                        AND (
+                            LOWER(COALESCE(ma.identifier, \'\')) = \'morbiditas\'
+                            OR LOWER(COALESCE(ma.name, \'\')) = \'morbiditas\'
+                        )
+    
+                    LEFT JOIN m_semester sem
+                        ON sem.id = l.id_semester
+    
+                    LEFT JOIN m_action_category cat
+                        ON cat.id = l.id_category
+    
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            e.patient_name
+                        FROM t_logbook_emr e
+                        WHERE
+                            e.id_logbook = l.id
+                            AND e.deleted_at IS NULL
+                        ORDER BY e.id
+                        LIMIT 1
+                    ) emr ON TRUE
+    
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            su.display_name
+                        FROM t_logbook_status ls
+                        JOIN m_action_role ar
+                            ON ar.id = ls.id_action_role
+                        JOIN m_user su
+                            ON su.id = ls.id_user
+                        WHERE
+                            ls.id_logbook = l.id
+                            AND ls.deleted_at IS NULL
+                            AND (
+                                LOWER(COALESCE(ar.identifier, \'\')) = \'staff_pelapor\'
+                                OR LOWER(
+                                    ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                                ) LIKE \'%pelapor%\'
+                            )
+                        ORDER BY ls.id
+                        LIMIT 1
+                    ) pelapor ON TRUE
+    
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            su.display_name
+                        FROM t_logbook_status ls
+                        JOIN m_action_role ar
+                            ON ar.id = ls.id_action_role
+                        JOIN m_user su
+                            ON su.id = ls.id_user
+                        WHERE
+                            ls.id_logbook = l.id
+                            AND ls.deleted_at IS NULL
+                            AND LOWER(COALESCE(ar.identifier, \'\')) NOT LIKE \'%kps%\'
+                            AND (
+                                LOWER(COALESCE(ar.identifier, \'\')) IN (
+                                    \'staff_penilai\',
+                                    \'penilai_gkm\'
+                                )
+                                OR LOWER(
+                                    ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                                ) LIKE \'%penilai%\'
+                                OR LOWER(
+                                    ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                                ) LIKE \'%gkm%\'
+                            )
+                    ) penilai ON TRUE
+    
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            su.display_name
+                        FROM t_logbook_status ls
+                        JOIN m_action_role ar
+                            ON ar.id = ls.id_action_role
+                        JOIN m_user su
+                            ON su.id = ls.id_user
+                        WHERE
+                            ls.id_logbook = l.id
+                            AND ls.deleted_at IS NULL
+                            AND (
+                                LOWER(COALESCE(ar.identifier, \'\')) IN (
+                                    \'staff_kps\',
+                                    \'kps\'
+                                )
+                                OR LOWER(
+                                    ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                                ) LIKE \'%kps%\'
+                            )
+                        ORDER BY ls.id
+                        LIMIT 1
+                    ) kps ON TRUE
+    
+                    WHERE
+                        l.id_client = :id_client
+                        AND l.id_user = :id_user
+                        AND l.deleted_at IS NULL';
+    
+        $sql = "SELECT *
+                FROM (
+                    {$baseSql}
+                ) AS x";
+    
+        $countSql = "SELECT COUNT(*)
+                     FROM (
+                         {$baseSql}
+                     ) AS x";
+    
+        $params = [
+            ':id_client' => $post['id_client'],
+            ':id_user'   => $post['id_user'],
+        ];
+    
+        // === FILTER STATUS ===
+        if (!empty($post['status'])) {
+            $sql .= ' WHERE LOWER(status) = LOWER(:status)';
+            $countSql .= ' WHERE LOWER(status) = LOWER(:status)';
+    
+            $params[':status'] = $post['status'];
+        }
+    
+        // === SEARCH ===
+        if (!empty($post['search'])) {
+            $searchTerm = '%' . $post['search'] . '%';
+    
+            $searchWhere = '
+                patient_name ILIKE :search
+                OR category ILIKE :search
+                OR staff_kps ILIKE :search
+            ';
+    
+            if (!empty($post['status'])) {
+                $sql .= ' AND (' . $searchWhere . ')';
+                $countSql .= ' AND (' . $searchWhere . ')';
+            } else {
+                $sql .= ' WHERE (' . $searchWhere . ')';
+                $countSql .= ' WHERE (' . $searchWhere . ')';
+            }
+    
+            $params[':search'] = $searchTerm;
+        }
+    
+        $sql .= " ORDER BY
+                    date $sort
+                LIMIT :limit
+                OFFSET :offset";
+    
+        $command      = Yii::app()->db->createCommand($sql);
+        $countCommand = Yii::app()->db->createCommand($countSql);
+    
+        foreach ($params as $key => $val) {
+            $command->bindValue($key, $val);
+            $countCommand->bindValue($key, $val);
+        }
+    
+        $command->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $command->bindValue(':offset', $offset, PDO::PARAM_INT);
+    
+        $res   = $command->queryAll();
+        $total = $countCommand->queryScalar();
+    
+        echo json_encode([
+            'status' => true,
+            'total'  => (int)$total,
+            'data'   => $res,
+            'pagination' => [
+                'page'  => $page,
+                'limit' => $limit,
+            ]
+        ]);
+    }
+    
+    public function actionGetDetailMorbidityByUser() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        if (!isset($post['id'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+    
+        $sql = 'SELECT
+                    l.id,
+                    u.display_name,
+    
+                    COALESCE(emr.patient_name, \'-\') AS patient_name,
+                    COALESCE(emr.age::text, \'-\') AS umur,
+                    COALESCE(emr.emr_number, \'-\') AS cm,
+                    COALESCE(emr.diagnosis, \'-\') AS dx_awal,
+    
+                    l.date,
+    
+                    COALESCE(sem.name, \'-\') AS semester,
+    
+                    CASE
+                        WHEN cat.points IS NOT NULL
+                            THEN cat.name || \' (\' || cat.points || \')\'
+                        ELSE COALESCE(cat.name, \'-\')
+                    END AS category,
+    
+                    COALESCE(pelapor.display_name, \'-\') AS staff_pelapor,
+                    COALESCE(penilai.display_name, \'-\') AS staff_penilai,
+                    COALESCE(kps.display_name, \'-\') AS staff_kps,
+    
+                    COALESCE(l.notes, \'-\') AS kronologi_morbiditas,
+    
+                    COALESCE(att.lampiran, \'-\') AS lampiran,
+    
+                    CASE
+                        WHEN l.verified = TRUE
+                            OR LOWER(COALESCE(l.verified_status, \'\')) = \'verified\'
+                            THEN \'Verified\'
+    
+                        WHEN LOWER(COALESCE(l.verified_status, \'\')) = \'rejected\'
+                            THEN \'Rejected\'
+    
+                        WHEN LOWER(COALESCE(l.verified_status, \'\')) = \'revised\'
+                            THEN \'Revised\'
+    
+                        WHEN LOWER(COALESCE(l.verified_status, \'\')) = \'pending\'
+                            THEN \'Pending\'
+    
+                        ELSE COALESCE(l.verified_status, \'-\')
+                    END AS status
+    
+                FROM t_logbook l
+    
+                JOIN m_user u
+                    ON u.id = l.id_user
+    
+                LEFT JOIN m_semester sem
+                    ON sem.id = l.id_semester
+    
+                LEFT JOIN m_action_category cat
+                    ON cat.id = l.id_category
+    
+                LEFT JOIN LATERAL (
+                    SELECT
+                        patient_name,
+                        age,
+                        emr_number,
+                        diagnosis
+                    FROM t_logbook_emr
+                    WHERE
+                        id_logbook = l.id
+                        AND deleted_at IS NULL
+                    ORDER BY id ASC
+                    LIMIT 1
+                ) emr ON TRUE
+    
+                LEFT JOIN LATERAL (
+                    SELECT
+                        su.display_name
+                    FROM t_logbook_status ls
+                    JOIN m_action_role ar
+                        ON ar.id = ls.id_action_role
+                    JOIN m_user su
+                        ON su.id = ls.id_user
+                    WHERE
+                        ls.id_logbook = l.id
+                        AND ls.deleted_at IS NULL
+                        AND (
+                            LOWER(COALESCE(ar.identifier, \'\')) = \'staff_pelapor\'
+                            OR LOWER(
+                                ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                            ) LIKE \'%pelapor%\'
+                        )
+                    ORDER BY ls.id
+                    LIMIT 1
+                ) pelapor ON TRUE
+    
+                LEFT JOIN LATERAL (
+                    SELECT
+                        su.display_name
+                    FROM t_logbook_status ls
+                    JOIN m_action_role ar
+                        ON ar.id = ls.id_action_role
+                    JOIN m_user su
+                        ON su.id = ls.id_user
+                    WHERE
+                        ls.id_logbook = l.id
+                        AND ls.deleted_at IS NULL
+                        AND LOWER(COALESCE(ar.identifier, \'\')) NOT LIKE \'%kps%\'
+                        AND (
+                            LOWER(COALESCE(ar.identifier, \'\')) IN (
+                                \'staff_penilai\',
+                                \'penilai_gkm\'
+                            )
+                            OR LOWER(
+                                ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                            ) LIKE \'%penilai%\'
+                            OR LOWER(
+                                ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                            ) LIKE \'%gkm%\'
+                        )
+                    ORDER BY ls.id
+                    LIMIT 1
+                ) penilai ON TRUE
+    
+                LEFT JOIN LATERAL (
+                    SELECT
+                        su.display_name
+                    FROM t_logbook_status ls
+                    JOIN m_action_role ar
+                        ON ar.id = ls.id_action_role
+                    JOIN m_user su
+                        ON su.id = ls.id_user
+                    WHERE
+                        ls.id_logbook = l.id
+                        AND ls.deleted_at IS NULL
+                        AND (
+                            LOWER(COALESCE(ar.identifier, \'\')) IN (
+                                \'staff_kps\',
+                                \'kps\'
+                            )
+                            OR LOWER(
+                                ar.role || \' \' || COALESCE(ar.identifier, \'\')
+                            ) LIKE \'%kps%\'
+                        )
+                    ORDER BY ls.id
+                    LIMIT 1
+                ) kps ON TRUE
+    
+                LEFT JOIN LATERAL (
+                    SELECT
+                        STRING_AGG(
+                            CONCAT(
+                                COALESCE(a.name, \'Lampiran\'),
+                                \': \',
+                                a.url_file
+                            ),
+                            E\'\\n\'
+                            ORDER BY a.id
+                        ) AS lampiran
+                    FROM t_logbook_attachment a
+                    WHERE
+                        a.id_logbook = l.id
+                        AND a.deleted_at IS NULL
+                ) att ON TRUE
+    
+                WHERE
+                    l.id = :id
+                    AND l.deleted_at IS NULL
+    
+                LIMIT 1';
+    
+        $command = Yii::app()->db->createCommand($sql);
+        $command->bindValue(':id', $post['id']);
+    
+        $data = $command->queryRow();
+    
+        if (!$data) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Morbidity data not found!'
+            ]);
+            Yii::app()->end();
+        }
+    
+        // === STAFF STATUS ===
+        $staffSql = '
+            SELECT
+                mu.display_name AS name,
+                mar.role AS role,
+                tls.status,
+                tls.verify_notes
+            FROM t_logbook_status tls
+    
+            INNER JOIN m_action_role mar
+                ON mar.id = tls.id_action_role
+    
+            INNER JOIN m_user mu
+                ON mu.id = tls.id_user
+    
+            WHERE
+                tls.id_logbook = :id_logbook
+                AND tls.deleted_at IS NULL
+                AND mar.role != \'Peserta\'
+    
+            ORDER BY mu.display_name';
+    
+        $staffCommand = Yii::app()->db->createCommand($staffSql);
+        $staffCommand->bindValue(':id_logbook', $post['id']);
+    
+        $staffData = $staffCommand->queryAll();
+    
+        $data['staff'] = $staffData;
+    
+        echo json_encode([
+            'status' => true,
+            'data' => $data
+        ]);
+    }
+    // === MORBIDITY ===
 
 
 
@@ -2912,6 +3585,7 @@ class ApiWebServiceController extends Controller {
                 tl.deleted_at IS NULL
                 AND tl.id_client = :id_client
                 AND tl.id_semester IS NOT NULL
+                AND tl.id_action = 20
         ";
 
         if (!empty($post['id_ppds'])) {
@@ -2951,12 +3625,13 @@ class ApiWebServiceController extends Controller {
                 mu.display_name AS user_name,
                 ms.name AS stase_name,
                 tl.date,
-                tl.notes
+                tl.notes,
+                tl.is_retake
             FROM t_logbook tl
             LEFT JOIN m_user mu ON mu.id = tl.id_user
             LEFT JOIN m_stase ms ON ms.id = tl.id_stase
             {$whereClause}
-            ORDER BY tl.date DESC
+            ORDER BY tl.created_date DESC
             LIMIT :limit
             OFFSET :offset
         ";
@@ -3042,7 +3717,7 @@ class ApiWebServiceController extends Controller {
         ]);
     }
 
-    public function actionDeleteStase() {
+    public function actionRemoveStase() {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
         
@@ -3345,11 +4020,13 @@ class ApiWebServiceController extends Controller {
             LEFT JOIN m_stage mst ON mst.id = ms.id_stage
             WHERE mu.id_client = :id_client
                 AND mu.deleted_at IS NULL
+                AND mu.is_show    = :is_show
                 AND mr.name IN ('ppds', 'staff')
         ";
-
+        
         $command = Yii::app()->db->createCommand($sql);
         $command->bindValue(':id_client', $post['id_client']);
+        $command->bindValue(':is_show', true);
         $data = $command->queryAll();
 
         echo json_encode([
@@ -3521,10 +4198,11 @@ class ApiWebServiceController extends Controller {
         ]);
     }
 
-    public function actionGetDashboardLogActivity() {
+    public function actionGetDashboardLogActivity()
+    {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-
+    
         if (!isset($post['id_client'])) {
             echo json_encode([
                 'status' => false,
@@ -3532,24 +4210,73 @@ class ApiWebServiceController extends Controller {
             ]);
             Yii::app()->end();
         }
-
+    
+        $page = isset($post['page']) ? (int)$post['page'] : 1;
+        $limit = isset($post['limit']) ? (int)$post['limit'] : 20;
+        $offset = ($page - 1) * $limit;
+    
         $sql = "
             SELECT
-                date,
-                message
-            FROM t_notif
-            WHERE id_client = :id_client
-            ORDER BY date DESC
-            LIMIT 10
+                n.id AS id_notifikasi,
+                n.message AS log_aktivitas,
+                n.type AS tipe,
+                n.date AT TIME ZONE 'Asia/Bangkok' AS tanggal_aktivitas,
+                u.display_name AS user_terkait,
+                r.name AS role_user,
+                n.url AS url_tujuan,
+                n.read AS sudah_dibaca
+            FROM t_notif n
+            LEFT JOIN m_user u
+                ON u.id = n.id_user
+            LEFT JOIN m_role r
+                ON r.id = u.id_role
+            WHERE
+                n.id_client = :id_client
+                AND n.deleted_at IS NULL
+            ORDER BY
+                n.date DESC,
+                n.id DESC
+            LIMIT :limit
+            OFFSET :offset
         ";
-
+    
+        $countSql = "
+            SELECT COUNT(*)
+            FROM t_notif n
+            WHERE
+                n.id_client = :id_client
+                AND n.deleted_at IS NULL
+        ";
+    
+        $params = [
+            ':id_client' => $post['id_client'],
+            ':limit' => $limit,
+            ':offset' => $offset
+        ];
+    
         $command = Yii::app()->db->createCommand($sql);
-        $command->bindValue(':id_client', $post['id_client']);
+    
+        foreach ($params as $key => $value) {
+            $command->bindValue($key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+    
         $data = $command->queryAll();
-
+    
+        $countCommand = Yii::app()->db->createCommand($countSql);
+        $countCommand->bindValue(':id_client', $post['id_client']);
+    
+        $total = (int)$countCommand->queryScalar();
+        $pageCount = $limit > 0 ? (int)ceil($total / $limit) : 0;
+    
         echo json_encode([
             'status' => true,
-            'data' => $data
+            'data' => $data,
+            'pagination' => [
+                'page' => $page,
+                'limit' => $limit,
+                'total' => $total,
+                'pageCount' => $pageCount
+            ]
         ]);
     }
 
@@ -3874,8 +4601,236 @@ class ApiWebServiceController extends Controller {
 
 
     // === REKAP STAGE ===
-    public function actionGetListRekapReport() {
-
+    public function actionGetListRekapReport()
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+            http_response_code(204);
+            Yii::app()->end();
+        }
+    
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        $page   = isset($post['page']) ? (int)$post['page'] : 1;
+        $limit  = isset($post['limit']) ? (int)$post['limit'] : 10;
+        $offset = ($page - 1) * $limit;
+    
+        $sort = (isset($post['sort']) && strtolower($post['sort']) === 'asc')
+            ? 'ASC'
+            : 'DESC';
+    
+        $sql = "
+            SELECT
+                u.id,
+                u.display_name AS name,
+                'Active' AS status,
+                'ppds' AS role,
+                s.name AS semester,
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Kegiatan Jaga / IGD / Emergency'
+                ) AS \"jaga_igd_emergency\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Ilmiah Stase'
+                ) AS \"ilmiah_stase\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Kegiatan Poli Klinik'
+                ) AS \"poli_klinik\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Kegiatan Kamar Operasi'
+                ) AS \"kamar_operasi\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Seminar Hasil'
+                ) AS \"seminar_hasil\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Review Artikel'
+                ) AS \"review_artikel\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Proposal Thesis'
+                ) AS \"proposal_thesis\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Exam'
+                ) AS \"exam\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Stase'
+                ) AS \"stase\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Bimbingan Operasi'
+                ) AS \"bimbingan_operasi\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Kegiatan Bangsal'
+                ) AS \"kegiatan_bangsal\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Publikasi'
+                ) AS \"publikasi\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Ilmiah Non Stase'
+                ) AS \"ilmiah_non_stase\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Course'
+                ) AS \"course\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Ekstrakulikuler'
+                ) AS \"ekstrakulikuler\",
+    
+                COUNT(rl.id) FILTER (
+                    WHERE rl.action = 'Pengabdian Masyarakat'
+                ) AS \"pengabdian_masyarakat\",
+    
+                COUNT(rl.id) AS total
+    
+            FROM m_user u
+    
+            JOIN m_role r
+                ON r.id = u.id_role
+    
+            JOIN m_semester s
+                ON s.id = u.id_semester
+    
+            LEFT JOIN v_logbook_summary_general rl
+                ON rl.ppds = u.display_name
+                AND rl.id_client = u.id_client
+                AND rl.date >= :start_date
+                AND rl.date <= :end_date
+    
+            WHERE
+                u.is_show = TRUE
+                AND u.id_semester IS NOT NULL
+                AND r.name = 'ppds'
+                AND u.id_client = :id_client
+    
+            GROUP BY
+                u.id,
+                u.display_name,
+                s.name
+    
+            ORDER BY
+                total {$sort},
+                CAST(
+                    REGEXP_REPLACE(s.name, '[^0-9]', '', 'g')
+                    AS INTEGER
+                ) DESC NULLS LAST,
+                u.display_name
+    
+            LIMIT :limit
+            OFFSET :offset
+        ";
+    
+        $countSql = "
+            SELECT COUNT(*)
+            FROM m_user u
+    
+            JOIN m_role r
+                ON r.id = u.id_role
+    
+            JOIN m_semester s
+                ON s.id = u.id_semester
+    
+            WHERE
+                u.is_show = TRUE
+                AND u.id_semester IS NOT NULL
+                AND r.name = 'ppds'
+                AND u.id_client = :id_client
+        ";
+    
+        $params = [
+            ':id_client' => $post['id_client'],
+            ':start_date' => !empty($post['start_date'])
+                ? $post['start_date']
+                : date('Y-m-01 00:00:00'),
+            ':end_date' => !empty($post['end_date'])
+                ? $post['end_date']
+                : date('Y-m-t 23:59:59')
+        ];
+    
+        $command = Yii::app()->db->createCommand($sql);
+        $countCommand = Yii::app()->db->createCommand($countSql);
+    
+        foreach ($params as $key => $value) {
+            $command->bindValue($key, $value);
+        }
+    
+        $countCommand->bindValue(':id_client', $post['id_client']);
+    
+        $command->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $command->bindValue(':offset', $offset, PDO::PARAM_INT);
+    
+        $data = $command->queryAll();
+        $total = $countCommand->queryScalar();
+    
+        /*
+         * DASHBOARD SUMMARY
+         */
+        $summarySql = "
+            SELECT
+                COUNT(DISTINCT u.id) AS total_ppds,
+                COUNT(rl.id) AS total_logbooks,
+                COUNT(DISTINCT s.name) AS total_semesters
+    
+            FROM m_user u
+    
+            JOIN m_role r
+                ON r.id = u.id_role
+    
+            JOIN m_semester s
+                ON s.id = u.id_semester
+    
+            LEFT JOIN v_logbook_summary_general rl
+                ON rl.ppds = u.display_name
+                AND rl.id_client = u.id_client
+                AND rl.date >= :start_date
+                AND rl.date <= :end_date
+    
+            WHERE
+                u.is_show = TRUE
+                AND u.id_semester IS NOT NULL
+                AND r.name = 'ppds'
+                AND u.id_client = :id_client
+        ";
+    
+        $summaryCommand = Yii::app()->db->createCommand($summarySql);
+    
+        $summaryCommand->bindValue(':id_client', $post['id_client']);
+        $summaryCommand->bindValue(':start_date', $params[':start_date']);
+        $summaryCommand->bindValue(':end_date', $params[':end_date']);
+    
+        $summary = $summaryCommand->queryRow();
+    
+        $totalPpds = (int)$summary['total_ppds'];
+        $totalLogbooks = (int)$summary['total_logbooks'];
+    
+        $summary['total_ppds'] = $totalPpds;
+        $summary['total_logbooks'] = $totalLogbooks;
+        $summary['avg_per_ppds'] = $totalPpds > 0
+            ? round($totalLogbooks / $totalPpds, 1)
+            : 0;
+        $summary['total_semesters'] = (int)$summary['total_semesters'];
+    
+        echo json_encode([
+            'status' => true,
+            'message' => 'Success',
+            'data' => $data,
+            'summary' => $summary,
+            'total' => (int)$total,
+            'pagination' => [
+                'page' => $page,
+                'limit' => $limit,
+            ],
+        ]);
     }
     
     public function actionGetDetailRekapReport() {
@@ -4038,6 +4993,95 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     
+    public function actionGetAverageRekapPenilaian()
+    {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        $baseWhere = "
+            FROM v_ppds_scoring_fixed
+            WHERE 1=1
+        ";
+    
+        $sql = "
+            SELECT
+                ROUND(AVG(total::numeric), 2) AS average
+            {$baseWhere}
+        ";
+    
+        $params = [];
+    
+        if (!empty($post['id_client'])) {
+            $sql .= ' AND id_client = :id_client';
+            $params[':id_client'] = $post['id_client'];
+        }
+    
+        if (!empty($post['ppds_name'])) {
+            $sql .= ' AND ppds = :ppds_name';
+            $params[':ppds_name'] = $post['ppds_name'];
+        }
+    
+        if (!empty($post['staff_name'])) {
+            $sql .= ' AND staff = :staff_name';
+            $params[':staff_name'] = $post['staff_name'];
+        }
+    
+        if (!empty($post['activity_name'])) {
+            $sql .= ' AND action = :activity_name';
+            $params[':activity_name'] = $post['activity_name'];
+        }
+    
+        if (!empty($post['stase_name'])) {
+            $sql .= ' AND stase = :stase_name';
+            $params[':stase_name'] = $post['stase_name'];
+        }
+    
+        if (!empty($post['start_date'])) {
+            $sql .= ' AND date_logbook >= :start_date';
+            $params[':start_date'] = $post['start_date'];
+        }
+    
+        if (!empty($post['end_date'])) {
+            $sql .= ' AND date_logbook <= :end_date';
+            $params[':end_date'] = $post['end_date'];
+        }
+    
+        if (!empty($post['search'])) {
+            $searchTerm = '%' . $post['search'] . '%';
+    
+            $sql .= ' AND (
+                ppds ILIKE :search
+                OR nim ILIKE :search
+                OR inisial_code ILIKE :search
+                OR semester ILIKE :search
+                OR stase ILIKE :search
+                OR pin ILIKE :search
+                OR staff ILIKE :search
+                OR action ILIKE :search
+                OR title ILIKE :search
+                OR notes ILIKE :search
+                OR peran ILIKE :search
+                OR category ILIKE :search
+            )';
+    
+            $params[':search'] = $searchTerm;
+        }
+    
+        $command = Yii::app()->db->createCommand($sql);
+    
+        foreach ($params as $key => $value) {
+            $command->bindValue($key, $value);
+        }
+    
+        $average = $command->queryScalar();
+    
+        echo json_encode([
+            'status' => true,
+            'message' => 'Success',
+            'data' => $average,
+        ]);
+    }
+    
     public function actionGetDetailRekapPenilaian()
     {
         $rest_json = file_get_contents("php://input");
@@ -4116,6 +5160,7 @@ class ApiWebServiceController extends Controller {
 
         $sql = "
             SELECT
+                CONCAT(id, '-', COALESCE(staff, '')) AS row_key,
                 id,
                 date,
                 ppds,
@@ -4183,6 +5228,12 @@ class ApiWebServiceController extends Controller {
             $sql      .= ' AND date <= :end_date';
             $countSql .= ' AND date <= :end_date';
             $params[':end_date'] = $post['end_date'];
+        }
+        
+        if (!empty($post['status'])) {
+            $sql      .= ' AND LOWER(status) = :status';
+            $countSql .= ' AND LOWER(status) = :status';
+            $params[':status'] = strtolower($post['status']);
         }
 
         // 🔥 search filter - ILIKE across multiple fields
@@ -4292,9 +5343,14 @@ class ApiWebServiceController extends Controller {
                 patient,
                 title
             FROM v_logbook_summary_general
-            WHERE id = :id
-            LIMIT 1
+            WHERE 
+                id = :id
         ";
+        
+        if (!empty($post['staff'])) {
+            $sql      .= " AND staff = '" . $post['staff'] . "'";
+        }
+        $sql .= " LIMIT 1";
 
         $command = Yii::app()->db->createCommand($sql);
         $command->bindValue(':id', $post['id'], PDO::PARAM_INT);
