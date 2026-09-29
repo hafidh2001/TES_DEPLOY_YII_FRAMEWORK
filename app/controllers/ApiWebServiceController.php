@@ -4833,8 +4833,362 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     
-    public function actionGetDetailRekapReport() {
-
+    // public function actionGetDetailRekapReport()
+    // {
+    //     if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    //         http_response_code(204);
+    //         Yii::app()->end();
+    //     }
+    
+    //     $rest_json = file_get_contents("php://input");
+    //     $post = json_decode($rest_json, true);
+    
+    //     if (!isset($post['id_client']) || !isset($post['id'])) {
+    //         echo json_encode([
+    //             'status' => false,
+    //             'message' => 'Invalid parameter!'
+    //         ]);
+    //         Yii::app()->end();
+    //     }
+    
+    //     $page = isset($post['page']) ? (int)$post['page'] : 1;
+    //     $limit = isset($post['limit']) ? (int)$post['limit'] : 10;
+    //     $offset = ($page - 1) * $limit;
+    
+    //     $params = [
+    //         ':id_client' => $post['id_client'],
+    //         ':id' => $post['id'],
+    //         ':start_date' => !empty($post['start_date'])
+    //             ? $post['start_date']
+    //             : date('Y-m-01'),
+    //         ':end_date' => !empty($post['end_date'])
+    //             ? $post['end_date']
+    //             : date('Y-m-t')
+    //     ];
+    
+    //     /*
+    //      * SUMMARY
+    //      */
+    //     $summarySql = "
+    //         SELECT
+    //             u.display_name AS ppds,
+    //             MIN(v.date)::date AS periode_mulai,
+    //             MAX(v.date)::date AS periode_selesai,
+    //             COUNT(v.id) AS total_logbooks,
+    //             MAX(v.semester) AS semester,
+    //             'Active' AS status
+    //         FROM v_logbook_summary_general v
+    //         JOIN m_user u
+    //             ON u.display_name = v.ppds
+    //             AND u.id_client = v.id_client
+    //         WHERE
+    //             u.id = :id
+    //             AND v.id_client = :id_client
+    //             AND v.date >= :start_date
+    //             AND v.date < (:end_date::date + INTERVAL '1 day')
+    //         GROUP BY
+    //             u.id,
+    //             u.display_name
+    //     ";
+    
+    //     $summaryCommand = Yii::app()->db->createCommand($summarySql);
+    
+    //     foreach ($params as $key => $value) {
+    //         $summaryCommand->bindValue($key, $value);
+    //     }
+    
+    //     $summary = $summaryCommand->queryRow();
+    
+    //     /*
+    //      * ACTIVITY BREAKDOWN
+    //      */
+    //     $breakdownSql = "
+    //         SELECT
+    //             v.action AS aktivitas,
+    //             COUNT(v.id) AS jumlah
+    //         FROM v_logbook_summary_general v
+    //         JOIN m_user u
+    //             ON u.display_name = v.ppds
+    //             AND u.id_client = v.id_client
+    //         WHERE
+    //             u.id = :id
+    //             AND v.id_client = :id_client
+    //             AND v.date >= :start_date
+    //             AND v.date < (:end_date::date + INTERVAL '1 day')
+    //         GROUP BY
+    //             v.action
+    //         ORDER BY
+    //             jumlah DESC,
+    //             aktivitas ASC
+    //     ";
+    
+    //     $breakdownCommand = Yii::app()->db->createCommand($breakdownSql);
+    
+    //     foreach ($params as $key => $value) {
+    //         $breakdownCommand->bindValue($key, $value);
+    //     }
+    
+    //     $breakdown = $breakdownCommand->queryAll();
+    
+    //     /*
+    //      * DETAIL LOGBOOK
+    //      */
+    //     $sql = "
+    //         SELECT
+    //             v.date::date AS tanggal,
+    //             v.action AS aktivitas,
+    //             COALESCE(v.title, '-') AS judul,
+    //             COALESCE(v.stase, '-') AS stase,
+    //             COALESCE(v.status, 'pending') AS status,
+    //             v.staff,
+    //             v.nim,
+    //             v.semester,
+    //             v.pin,
+    //             v.category,
+    //             v.peran,
+    //             v.attachment,
+    //             v.emr_number,
+    //             v.diagnosis,
+    //             v.treatment,
+    //             v.patient,
+    //             v.id AS id_logbook
+    //         FROM v_logbook_summary_general v
+    //         JOIN m_user u
+    //             ON u.display_name = v.ppds
+    //             AND u.id_client = v.id_client
+    //         WHERE
+    //             u.id = :id
+    //             AND v.id_client = :id_client
+    //             AND v.date >= :start_date
+    //             AND v.date < (:end_date::date + INTERVAL '1 day')
+    //         ORDER BY
+    //             v.date DESC,
+    //             v.id DESC
+    //         LIMIT :limit
+    //         OFFSET :offset
+    //     ";
+    
+    //     $countSql = "
+    //         SELECT COUNT(*)
+    //         FROM v_logbook_summary_general v
+    //         JOIN m_user u
+    //             ON u.display_name = v.ppds
+    //             AND u.id_client = v.id_client
+    //         WHERE
+    //             u.id = :id
+    //             AND v.id_client = :id_client
+    //             AND v.date >= :start_date
+    //             AND v.date < (:end_date::date + INTERVAL '1 day')
+    //     ";
+    
+    //     $command = Yii::app()->db->createCommand($sql);
+    //     $countCommand = Yii::app()->db->createCommand($countSql);
+    
+    //     foreach ($params as $key => $value) {
+    //         $command->bindValue($key, $value);
+    //         $countCommand->bindValue($key, $value);
+    //     }
+    
+    //     $command->bindValue(':limit', $limit, PDO::PARAM_INT);
+    //     $command->bindValue(':offset', $offset, PDO::PARAM_INT);
+    
+    //     $data = $command->queryAll();
+    //     $total = (int)$countCommand->queryScalar();
+    
+    //     echo json_encode([
+    //         'status' => true,
+    //         'message' => 'Success',
+    //         'summary' => $summary ?: [
+    //             'ppds' => null,
+    //             'periode_mulai' => null,
+    //             'periode_selesai' => null,
+    //             'total_logbooks' => 0,
+    //             'semester' => null,
+    //             'status' => 'Active'
+    //         ],
+    //         'activity_breakdown' => $breakdown,
+    //         'data' => $data,
+    //         'total' => (int)$total,
+    //         'pagination' => [
+    //             'page' => $page,
+    //             'limit' => $limit
+    //         ]
+    //     ]);
+    // }
+    public function actionGetDetailRekapReport()
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+            http_response_code(204);
+            Yii::app()->end();
+        }
+    
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        if (!isset($post['id_client']) || !isset($post['id'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+    
+        $page = isset($post['page']) ? (int)$post['page'] : 1;
+        $limit = isset($post['limit']) ? (int)$post['limit'] : 10;
+        $offset = ($page - 1) * $limit;
+    
+        $params = [
+            ':id_client' => $post['id_client'],
+            ':id' => $post['id'],
+            ':start_date' => !empty($post['start_date'])
+                ? $post['start_date']
+                : date('Y-m-01'),
+            ':end_date' => !empty($post['end_date'])
+                ? $post['end_date']
+                : date('Y-m-t')
+        ];
+    
+        /*
+         * SUMMARY
+         */
+        $summarySql = "
+            SELECT
+                u.display_name AS ppds,
+                COUNT(v.id) AS total_logbooks,
+                MAX(v.semester) AS semester,
+                'Active' AS status
+            FROM m_user u
+            LEFT JOIN v_logbook_summary_general v
+                ON v.ppds = u.display_name
+                AND v.id_client = u.id_client
+                AND v.date >= :start_date
+                AND v.date < (:end_date::date + INTERVAL '1 day')
+            WHERE
+                u.id = :id
+                AND u.id_client = :id_client
+            GROUP BY
+                u.id,
+                u.display_name
+        ";
+    
+        $summaryCommand = Yii::app()->db->createCommand($summarySql);
+    
+        foreach ($params as $key => $value) {
+            $summaryCommand->bindValue($key, $value);
+        }
+    
+        $summary = $summaryCommand->queryRow();
+    
+        if (!$summary) {
+            $summary = [
+                'ppds' => null,
+                'total_logbooks' => 0,
+                'semester' => null,
+                'status' => 'Active'
+            ];
+        }
+    
+        $summary['periode_mulai'] = $params[':start_date'];
+        $summary['periode_selesai'] = $params[':end_date'];
+        $summary['total_logbooks'] = (int)$summary['total_logbooks'];
+    
+        /*
+         * ACTIVITY BREAKDOWN
+         */
+        $activitySql = "
+            SELECT
+                v.action AS aktivitas,
+                COUNT(v.id) AS jumlah
+            FROM v_logbook_summary_general v
+            JOIN m_user u
+                ON u.display_name = v.ppds
+                AND u.id_client = v.id_client
+            WHERE
+                u.id = :id
+                AND v.id_client = :id_client
+                AND v.date >= :start_date
+                AND v.date < (:end_date::date + INTERVAL '1 day')
+            GROUP BY
+                v.action
+            ORDER BY
+                jumlah DESC,
+                aktivitas ASC
+        ";
+    
+        $activityCommand = Yii::app()->db->createCommand($activitySql);
+    
+        foreach ($params as $key => $value) {
+            $activityCommand->bindValue($key, $value);
+        }
+    
+        $activity = $activityCommand->queryAll();
+    
+        /*
+         * DETAIL LOGBOOK
+         */
+        $sql = "
+            SELECT
+                v.id AS id_logbook,
+                v.date::date AS tanggal,
+                v.action AS aktivitas,
+                COALESCE(v.title, '-') AS judul,
+                COALESCE(v.stase, '-') AS stase,
+                COALESCE(v.status, 'pending') AS status
+            FROM v_logbook_summary_general v
+            JOIN m_user u
+                ON u.display_name = v.ppds
+                AND u.id_client = v.id_client
+            WHERE
+                u.id = :id
+                AND v.id_client = :id_client
+                AND v.date >= :start_date
+                AND v.date < (:end_date::date + INTERVAL '1 day')
+            ORDER BY
+                v.date DESC,
+                v.id DESC
+            LIMIT :limit
+            OFFSET :offset
+        ";
+    
+        $countSql = "
+            SELECT COUNT(*)
+            FROM v_logbook_summary_general v
+            JOIN m_user u
+                ON u.display_name = v.ppds
+                AND u.id_client = v.id_client
+            WHERE
+                u.id = :id
+                AND v.id_client = :id_client
+                AND v.date >= :start_date
+                AND v.date < (:end_date::date + INTERVAL '1 day')
+        ";
+    
+        $command = Yii::app()->db->createCommand($sql);
+        $countCommand = Yii::app()->db->createCommand($countSql);
+    
+        foreach ($params as $key => $value) {
+            $command->bindValue($key, $value);
+            $countCommand->bindValue($key, $value);
+        }
+    
+        $command->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $command->bindValue(':offset', $offset, PDO::PARAM_INT);
+    
+        $data = $command->queryAll();
+        $total = (int)$countCommand->queryScalar();
+        
+        echo json_encode([
+            'status' => true,
+            'message' => 'Success',
+            'summary' => $summary,
+            'activity' => $activity,
+            'data' => $data,
+            'total' => (int)$total,
+            'pagination' => [
+                'page' => $page,
+                'limit' => $limit,
+            ],
+        ]);
     }
 
     public function actionGetListRekapPenilaian()
