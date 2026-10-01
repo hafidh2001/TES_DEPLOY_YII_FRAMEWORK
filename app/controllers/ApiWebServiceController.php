@@ -394,6 +394,39 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     
+    public function actionGetMasterRoleStaff() {
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+        
+        if (!isset($post['id_client'])) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+        
+        $sql = "SELECT
+                    mr.id,
+                    mr.name
+                FROM m_role mr
+                WHERE
+                    mr.id_client = :id_client
+                    AND mr.name ILIKE '%staff%'
+                ORDER BY
+                    mr.id ASC";
+        
+        $res = Yii::app()->db->createCommand($sql)
+            ->bindValue(':id_client', $post['id_client'])
+            ->queryAll();
+        
+        echo json_encode([
+            'status'  => true,
+            'total'   => count($res),
+            'data'    => $res
+        ]);
+    }
+    
     public function actionGetMasterStaff() {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
@@ -1067,13 +1100,16 @@ class ApiWebServiceController extends Controller {
         if (!empty($post['start_date'])) {
             $sql      .= ' AND tl.date >= :start_date';
             $countSql .= ' AND tl.date >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $sql      .= ' AND tl.date <= :end_date';
-            $countSql .= ' AND tl.date <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $sql      .= ' AND tl.date < :end_date';
+            $countSql .= ' AND tl.date < :end_date';
+            $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );
         }
 
         if (!empty($post['status'])) {
@@ -1318,8 +1354,8 @@ class ApiWebServiceController extends Controller {
                 LEFT JOIN m_stase ms ON ms.id = mu.id_stase
                 WHERE 
                     mu.id_client  = :id_client
-                AND mu.status IN (:status1, :status2)
-                AND mu.is_show    = :is_show
+                -- AND mu.status IN (:status1, :status2)
+                -- AND mu.is_show    = :is_show
                 AND mu.deleted_at IS NULL
                 AND mr.name       = :role_name';
         
@@ -1329,16 +1365,16 @@ class ApiWebServiceController extends Controller {
                     LEFT JOIN m_stase ms ON ms.id = mu.id_stase
                     WHERE 
                         mu.id_client  = :id_client
-                    AND mu.status IN (:status1, :status2)
-                    AND mu.is_show    = :is_show
+                    -- AND mu.status IN (:status1, :status2)
+                    -- AND mu.is_show    = :is_show
                     AND mu.deleted_at IS NULL
                     AND mr.name       = :role_name';
     
         $params = [
             ':id_client' => $post['id_client'],
-            ':status1'   => 'Inactive',
-            ':status2'   => 'Lulus',
-            ':is_show'   => true,
+            // ':status1'   => 'Inactive',
+            // ':status2'   => 'Lulus',
+            // ':is_show'   => true,
             ':role_name' => 'ppds'
         ];
     
@@ -1359,6 +1395,17 @@ class ApiWebServiceController extends Controller {
             $sql      .= ' AND mu.code ILIKE :nim';
             $countSql .= ' AND mu.code ILIKE :nim';
             $params[':nim'] = '%' . $post['nim'] . '%';
+        }
+        
+        if (!empty($post['status'])) {
+            $sql      .= ' AND mu.status = :status';
+            $countSql .= ' AND mu.status = :status';
+            $params[':status'] = $post['status'];
+        } else {
+            $sql      .= ' AND mu.status IN (:status1, :status2)';
+            $countSql .= ' AND mu.status IN (:status1, :status2)';
+            $params[':status1'] = 'Inactive';
+            $params[':status2'] = 'Lulus';
         }
 
         // 🔥 search filter - ILIKE across multiple fields
@@ -1443,7 +1490,7 @@ class ApiWebServiceController extends Controller {
         // sorting (default ASC)
         $sort = (isset($post['sort']) && strtolower($post['sort']) === 'desc') ? 'DESC' : 'ASC';
 
-        $sql = 'SELECT
+        $sql = "SELECT
                     mu.id,
                     mu.display_name,
                     mu.username,
@@ -1453,6 +1500,7 @@ class ApiWebServiceController extends Controller {
                     mu.location,
                     mu.date_of_birth,
                     mu.code AS nim,
+                    mu.id_role,
                     mr.name AS role_name,
                     ms.name AS stase_name,
                     (
@@ -1470,9 +1518,9 @@ class ApiWebServiceController extends Controller {
                 AND mu.status     = :status
                 AND mu.is_show    = :is_show
                 AND mu.deleted_at IS NULL
-                AND mr.name       = :role_name';
+                AND mr.name ILIKE :role_name";
         
-        $countSql = 'SELECT COUNT(*)
+        $countSql = "SELECT COUNT(*)
                     FROM m_user mu
                     LEFT JOIN m_role mr ON mr.id = mu.id_role
                     LEFT JOIN m_stase ms ON ms.id = mu.id_stase
@@ -1481,13 +1529,12 @@ class ApiWebServiceController extends Controller {
                     AND mu.status     = :status
                     AND mu.is_show    = :is_show
                     AND mu.deleted_at IS NULL
-                    AND mr.name       = :role_name';
+                    AND mr.name ILIKE :role_name";
     
         $params = [
             ':id_client' => $post['id_client'],
             ':status'    => 'Active',
             ':is_show'   => true,
-            ':role_name' => 'staff',
             ':role_action' => 'Peserta'
         ];
     
@@ -1502,6 +1549,12 @@ class ApiWebServiceController extends Controller {
             $sql      .= ' AND mu.code ILIKE :nim';
             $countSql .= ' AND mu.code ILIKE :nim';
             $params[':nim'] = '%' . $post['nim'] . '%';
+        }
+        
+        if (!empty($post['role'])) {
+            $params[':role_name'] = '%' . $post['role'] . '%';
+        } else {
+            $params[':role_name'] = '%staff%';
         }
 
         // 🔥 search filter - ILIKE across multiple fields
@@ -1631,6 +1684,7 @@ class ApiWebServiceController extends Controller {
                     mu.location,
                     mu.date_of_birth,
                     mu.code AS nim,
+                    mu.id_role,
                     mr.name AS role_name,
                     ms.name AS stase_name,
                     (
@@ -1674,7 +1728,8 @@ class ApiWebServiceController extends Controller {
             !isset($post['display_name']) ||
             !isset($post['username']) ||
             !isset($post['email']) ||
-            !isset($post['phone'])
+            !isset($post['phone']) ||
+            !isset($post['id_role'])
         ) {
             echo json_encode([
                 'status' => false,
@@ -1703,6 +1758,7 @@ class ApiWebServiceController extends Controller {
         $user->location       = $post['location'] ?? null;
         $user->date_of_birth  = $post['date_of_birth'] ?? null;
         $user->code           = $post['nim'] ?? null;
+        $user->id_role        = $post['id_role'];
         
         if (!$user->save()) {
             echo json_encode([
@@ -1733,7 +1789,8 @@ class ApiWebServiceController extends Controller {
             !isset($post['email']) ||
             !isset($post['phone']) ||
             !isset($post['password']) ||
-            !isset($post['confirm_password'])
+            !isset($post['confirm_password']) ||
+            !isset($post['id_role'])
         ) {
             echo json_encode([
                 'status' => false,
@@ -1753,20 +1810,12 @@ class ApiWebServiceController extends Controller {
             Yii::app()->end();
         }
         
-        $role = MRole::model()->findByAttributes(
-                    [
-                        'id_client' => $post['id_client'],
-                        'name'      => 'staff'
-                    ],
-                    ['select' => 'id']
-            );
-        
         try {
             $user                 = new MUser;
             $user->id_client      = $post['id_client'];
             $user->created_by     = $post['created_by'];
             $user->created_date   = date('Y-m-d H:i:s');
-            $user->id_role        = $role->id;
+            $user->id_role        = $post['id_role'];
             $user->display_name   = $post['display_name'];
             $user->username       = $post['username'];
             $user->email          = $post['email'];
@@ -1909,13 +1958,16 @@ class ApiWebServiceController extends Controller {
         if (!empty($post['start_date'])) {
             $sql      .= ' AND tl.date >= :start_date';
             $countSql .= ' AND tl.date >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $sql      .= ' AND tl.date <= :end_date';
-            $countSql .= ' AND tl.date <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $sql      .= ' AND tl.date < :end_date';
+            $countSql .= ' AND tl.date < :end_date';
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
 
         if (!empty($post['status'])) {
@@ -2329,179 +2381,164 @@ class ApiWebServiceController extends Controller {
     // === HOSPITAL ===
     
     // === MORBIDITY ===
-    public function actionGetListMorbidity() {
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-    
-        if (!isset($post['id_client'])) {
-            echo json_encode([
-                'status' => false,
-                'message' => 'Invalid parameter!'
-            ]);
-            Yii::app()->end();
-        }
-    
-        // pagination default
-        $page  = isset($post['page']) ? (int)$post['page'] : 1;
-        $limit = isset($post['limit']) ? (int)$post['limit'] : 10;
-        $offset = ($page - 1) * $limit;
-    
-        // sorting (default DESC)
-        $sort = (isset($post['sort']) && strtolower($post['sort']) === 'asc') ? 'ASC' : 'DESC';
-    
-        $sql = 'SELECT
-                    mph.id,
-                    mph.id_user,
-                    mph.id_stase,
-                    mph.id_semester,
-    
-                    mu.display_name,
-                    mu.code,
-    
-                    COALESCE(
-                        SUM(
-                            CASE
-                                WHEN (
-                                    tl.verified = TRUE
-                                    OR LOWER(COALESCE(tl.verified_status, \'\')) = \'verified\'
-                                )
-                                AND mac.points IS NOT NULL
-                                AND tl.created_date >= COALESCE(
-                                    mph.started_at,
-                                    \'1970-01-01\'::timestamptz
-                                )
-                                AND (
-                                    COALESCE(
-                                        mph.id_semester,
-                                        mu.id_semester,
-                                        0
-                                    ) = 0
-                                    OR tl.id_semester = COALESCE(
-                                        mph.id_semester,
-                                        mu.id_semester
-                                    )
-                                )
-                                THEN mac.points
-                                ELSE 0
-                            END
-                        ),
-                        0
-                    ) AS poin_aktif,
-    
-                    COUNT(tl.id) AS jml_logbook,
-    
-                    COUNT(tl.id) FILTER (
-                        WHERE tl.verified = TRUE
-                           OR LOWER(COALESCE(tl.verified_status, \'\')) = \'verified\'
-                    ) AS verified
-    
-                FROM t_logbook tl
-    
-                JOIN m_user mu
-                    ON mu.id = tl.id_user
-    
-                JOIN m_action ma
-                    ON ma.id = tl.id_action
-                    AND ma.id_client = tl.id_client
-                    AND (
-                        LOWER(COALESCE(ma.identifier, \'\')) = \'morbiditas\'
-                        OR LOWER(COALESCE(ma.name, \'\')) = \'morbiditas\'
+    public function actionGetListMorbidity()
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $post = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($post) || !isset($post['id_client']) || !preg_match('/^[1-9][0-9]*$/', (string)$post['id_client'])) {
+        echo json_encode(array('status'=>false, 'message'=>'Invalid parameter!'));
+        Yii::app()->end();
+    }
+
+    $page = max(1, isset($post['page']) ? (int)$post['page'] : 1);
+    $limit = min(100, max(1, isset($post['limit']) ? (int)$post['limit'] : 10));
+    $offset = ($page - 1) * $limit;
+    $sort = isset($post['sort']) && strtolower((string)$post['sort']) === 'asc' ? 'ASC' : 'DESC';
+
+    try {
+        $db = Yii::app()->dbPrasi;
+
+        $baseSql = "
+            SELECT
+                u.id AS id,
+                u.id AS id_user,
+                u.id_stase,
+                u.id_semester,
+                u.display_name,
+                u.code,
+
+                /* Active Point: hitung hanya dari Morbiditas yang terikat
+                 * ke sesi aktif user (id_morbiditas_period = session.id).
+                 * Jika ada Morbiditas tanpa binding (data lama), fallback
+                 * ke logika timestamp. */
+                CASE
+                    WHEN session.id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM t_logbook unbound_lb
+                        JOIN m_action unbound_a ON unbound_a.id = unbound_lb.id_action
+                            AND unbound_a.id_client = unbound_lb.id_client
+                        WHERE unbound_lb.id_user = u.id
+                          AND unbound_lb.id_client = u.id_client
+                          AND unbound_lb.id_semester = u.id_semester
+                          AND unbound_lb.id_morbiditas_period IS NULL
+                          AND unbound_lb.deleted_at IS NULL
+                          AND (unbound_lb.verified IS TRUE
+                               OR LOWER(COALESCE(unbound_lb.verified_status, '')) = 'verified')
+                          AND (LOWER(COALESCE(unbound_a.identifier, '')) = 'morbiditas'
+                               OR LOWER(COALESCE(unbound_a.name, '')) = 'morbiditas'
+                               OR unbound_a.id = 39)
                     )
-    
-                LEFT JOIN m_action_category mac
-                    ON mac.id = tl.id_category
-    
-                LEFT JOIN LATERAL (
-                    SELECT
-                        mph.id,
-                        mph.id_user,
-                        mph.id_stase,
-                        mph.id_semester,
-                        mph.started_at
-                    FROM t_morbiditas_points_history mph
-                    WHERE
-                        mph.id_user = tl.id_user
-                        AND mph.id_client = tl.id_client
-                        AND mph.ended_at IS NULL
-                    ORDER BY mph.id DESC
-                    LIMIT 1
-                ) mph ON TRUE
-    
-                WHERE
-                    tl.id_client = :id_client
-                    AND tl.deleted_at IS NULL
-    
-                GROUP BY
-                    mph.id,
-                    mph.id_user,
-                    mph.id_stase,
-                    mph.id_semester,
-                    mu.display_name,
-                    mu.code';
-    
-        // bungkus hasil GROUP BY supaya search bisa berdasarkan poin_aktif
-        $sql = "SELECT *
-                FROM (
-                    {$sql}
-                ) AS x";
-    
-        $countSql = "SELECT COUNT(*)
-                     FROM (
-                         {$sql}
-                     ) AS x";
-    
-        $params = [
-            ':id_client' => $post['id_client'],
-        ];
-    
-        // search filter
+                    THEN
+                        /* Semua Morbiditas sudah ter-binding: hitung dari binding */
+                        COALESCE(SUM(CASE
+                            WHEN ma.id IS NOT NULL
+                             AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, '')) = 'verified')
+                             AND category.points IS NOT NULL
+                             AND lb.id_morbiditas_period = session.id
+                            THEN category.points ELSE 0
+                        END), 0)::int
+                    ELSE
+                        /* Fallback: logika timestamp untuk data lama */
+                        COALESCE(SUM(CASE
+                            WHEN ma.id IS NOT NULL
+                             AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, '')) = 'verified')
+                             AND category.points IS NOT NULL
+                             AND lb.id_semester = u.id_semester
+                             AND lb.created_date >= GREATEST(
+                                COALESCE(session.started_at, '1970-01-01 00:00:00+00'::timestamptz),
+                                COALESCE(stase_boundary.created_date, '1970-01-01 00:00:00+00'::timestamptz)
+                             )
+                            THEN category.points ELSE 0
+                        END), 0)::int
+                END AS poin_aktif,
+
+                COUNT(lb.id) FILTER (WHERE ma.id IS NOT NULL) AS jml_logbook,
+                COUNT(lb.id) FILTER (
+                    WHERE ma.id IS NOT NULL
+                      AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, '')) = 'verified')
+                ) AS verified
+            FROM m_user u
+            INNER JOIN m_role role ON role.id = u.id_role
+            LEFT JOIN LATERAL (
+                SELECT mph.id, mph.started_at
+                FROM t_morbiditas_points_history mph
+                WHERE mph.id_user = u.id
+                  AND mph.id_client = u.id_client
+                  AND mph.ended_at IS NULL
+                ORDER BY mph.id DESC
+                LIMIT 1
+            ) session ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT milestone.created_date
+                FROM t_logbook milestone
+                INNER JOIN m_action milestone_action ON milestone_action.id = milestone.id_action
+                WHERE milestone.id_user = u.id
+                  AND milestone.id_client = u.id_client
+                  AND milestone.id_semester = u.id_semester
+                  AND milestone.deleted_at IS NULL
+                  AND milestone_action.is_milestone = true
+                  AND milestone_action.show_on_milestone = true
+                  AND (LOWER(COALESCE(milestone_action.identifier, '')) = 'stase'
+                       OR LOWER(COALESCE(milestone_action.name, '')) = 'stase')
+                ORDER BY milestone.created_date DESC, milestone.id DESC
+                LIMIT 1
+            ) stase_boundary ON TRUE
+            LEFT JOIN t_logbook lb
+                ON lb.id_user = u.id
+               AND lb.id_client = u.id_client
+               AND lb.deleted_at IS NULL
+            LEFT JOIN m_action ma
+                ON ma.id = lb.id_action
+               AND ma.id_client = lb.id_client
+               AND (LOWER(COALESCE(ma.identifier, '')) = 'morbiditas'
+                    OR LOWER(COALESCE(ma.name, '')) = 'morbiditas'
+                    OR ma.id = 39)
+            LEFT JOIN m_action_category category
+                ON category.id = lb.id_category
+               AND category.id_action = lb.id_action
+               AND category.id_client = lb.id_client
+            WHERE u.id_client = :id_client
+              AND u.deleted_at IS NULL
+              AND u.status = 'Active'
+              AND LOWER(role.name) = 'ppds'
+            GROUP BY u.id, u.id_stase, u.id_semester, u.display_name, u.code,
+                     session.id, session.started_at,
+                     stase_boundary.created_date
+        ";
+
+        $sql = "SELECT * FROM ({$baseSql}) AS x";
+        $countSql = "SELECT COUNT(*) FROM ({$baseSql}) AS x";
+        $params = array(':id_client'=>(int)$post['id_client']);
         if (!empty($post['search'])) {
-            $sql .= ' WHERE (
-                display_name ILIKE :search
-                OR code ILIKE :search
-                OR CAST(poin_aktif AS TEXT) ILIKE :search
-            )';
-    
-            $countSql .= ' WHERE (
-                display_name ILIKE :search
-                OR code ILIKE :search
-                OR CAST(poin_aktif AS TEXT) ILIKE :search
-            )';
-    
-            $params[':search'] = '%' . $post['search'] . '%';
+            $where = " WHERE (display_name ILIKE :search OR code ILIKE :search OR CAST(poin_aktif AS TEXT) ILIKE :search)";
+            $sql .= $where;
+            $countSql .= $where;
+            $params[':search'] = '%' . trim((string)$post['search']) . '%';
         }
-    
-        // sorting + pagination
-        $sql .= " ORDER BY
-                    poin_aktif $sort,
-                    display_name ASC
-                LIMIT :limit
-                OFFSET :offset";
-    
-        $command      = Yii::app()->db->createCommand($sql);
-        $countCommand = Yii::app()->db->createCommand($countSql);
-    
-        foreach ($params as $key => $val) {
-            $command->bindValue($key, $val);
-            $countCommand->bindValue($key, $val);
+        $sql .= " ORDER BY poin_aktif {$sort}, display_name ASC LIMIT :limit OFFSET :offset";
+
+        $command = $db->createCommand($sql);
+        $countCommand = $db->createCommand($countSql);
+        foreach ($params as $key=>$value) {
+            $command->bindValue($key, $value);
+            $countCommand->bindValue($key, $value);
         }
-    
         $command->bindValue(':limit', $limit, PDO::PARAM_INT);
         $command->bindValue(':offset', $offset, PDO::PARAM_INT);
-    
-        $res   = $command->queryAll();
-        $total = $countCommand->queryScalar();
-    
-        echo json_encode([
-            'status' => true,
-            'total'  => (int)$total,
-            'data'   => $res,
-            'pagination' => [
-                'page'  => $page,
-                'limit' => $limit,
-            ]
-        ]);
+        $rows = $command->queryAll();
+        $total = (int)$countCommand->queryScalar();
+
+        echo json_encode(array(
+            'status'=>true,
+            'total'=>$total,
+            'data'=>$rows,
+            'pagination'=>array('page'=>$page, 'limit'=>$limit),
+        ));
+    } catch (Exception $e) {
+        Yii::log('GetListMorbidity failed: '.$e->getMessage(), CLogger::LEVEL_ERROR, 'api.morbiditas');
+        echo json_encode(array('status'=>false, 'message'=>'Gagal memuat Morbiditas'));
     }
+    Yii::app()->end();
+}
     
     public function actionGetListMorbidityByUser() {
         $rest_json = file_get_contents("php://input");
@@ -2964,6 +3001,291 @@ class ApiWebServiceController extends Controller {
             'data' => $data
         ]);
     }
+    
+    
+    public function actionGetMorbiditasUndoInfo()
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $post = json_decode(file_get_contents('php://input'), true);
+
+    foreach (['created_by', 'id_client', 'id_user'] as $field) {
+        if (!is_array($post) || !isset($post[$field]) || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
+            echo json_encode(['status'=>false, 'message'=>$field.' wajib berupa ID positif']);
+            Yii::app()->end();
+        }
+    }
+
+    try {
+        $db = Yii::app()->dbPrasi;
+        $client = (int)$post['id_client'];
+        $user = (int)$post['id_user'];
+
+        $ppds = $db->createCommand(
+            "SELECT u.id, u.display_name, u.id_semester, u.id_stase
+             FROM m_user u JOIN m_role r ON r.id=u.id_role
+             WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL AND lower(r.name)='ppds'"
+        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
+
+        if (!$ppds) {
+            throw new RuntimeException('PPDS tidak ditemukan untuk client ini');
+        }
+
+        // Sesi aktif
+        $open = $db->createCommand(
+            'SELECT id, id_semester, id_stase, points, started_at
+             FROM t_morbiditas_points_history
+             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
+             ORDER BY id DESC LIMIT 1'
+        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
+
+        if (!$open) {
+            echo json_encode(['status'=>true, 'data'=>[
+                'id_user'=>$user, 'display_name'=>$ppds['display_name'],
+                'can_undo'=>false, 'reason'=>'Belum ada sesi poin aktif'
+            ]]);
+            Yii::app()->end();
+        }
+
+        // Hitung poin aktif sesi ini (binding-based)
+        $currentPoints = (int)$db->createCommand(
+            "SELECT COALESCE(SUM(category.points), 0)::int
+             FROM t_logbook lb
+             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
+             INNER JOIN m_action_category category ON category.id=lb.id_category
+             WHERE lb.id_morbiditas_period=:session_id
+               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
+               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
+                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
+        )->bindValue(':session_id', (int)$open['id'])->queryScalar();
+
+        // Sesi sebelumnya (closed)
+        $closed = $db->createCommand(
+            'SELECT id, id_semester, id_stase, points, started_at
+             FROM t_morbiditas_points_history
+             WHERE id_user=:user AND id_client=:client AND ended_at IS NOT NULL
+             ORDER BY ended_at DESC, id DESC LIMIT 1'
+        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
+
+        $currentName = $db->createCommand(
+            'SELECT name FROM m_semester WHERE id=:id AND id_client=:client'
+        )->bindValues([':id'=>(int)$open['id_semester'], ':client'=>$client])->queryScalar();
+
+        $base = [
+            'id_user'=>$user,
+            'display_name'=>$ppds['display_name'],
+            'current_semester_id'=>(int)$open['id_semester'],
+            'current_semester_name'=>$currentName ?: null,
+            'current_active_points'=>$currentPoints,
+            'can_undo'=>false,
+        ];
+
+        if (!$closed) {
+            echo json_encode(['status'=>true, 'data'=>$base + ['reason'=>'Belum ada riwayat ganti semester']]);
+            Yii::app()->end();
+        }
+
+        $restorePoints = (int)$closed['points'];
+
+        // Hitung poin binding-based untuk sesi yang akan di-restore
+        $boundPoints = (int)$db->createCommand(
+            "SELECT COALESCE(SUM(category.points), 0)::int
+             FROM t_logbook lb
+             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
+             INNER JOIN m_action_category category ON category.id=lb.id_category
+             WHERE lb.id_morbiditas_period=:session_id
+               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
+               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
+                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
+        )->bindValue(':session_id', (int)$closed['id'])->queryScalar();
+
+        // Gunakan yang lebih besar: snapshot lama atau binding-based
+        if ($boundPoints > $restorePoints) {
+            $restorePoints = $boundPoints;
+        }
+
+        $restore = $db->createCommand(
+            'SELECT sem.name AS semester_name, st.name AS stase_name,
+                    sem.id_stage, stage.name AS stage_name
+             FROM m_semester sem
+             LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client
+             LEFT JOIN m_stage stage ON stage.id=sem.id_stage
+             WHERE sem.id=:semester AND sem.id_client=:client'
+        )->bindValues([
+            ':semester'=>(int)$closed['id_semester'],
+            ':stase'=>$closed['id_stase'],
+            ':client'=>$client,
+        ])->queryRow();
+
+        $canUndo = $currentPoints === 0;
+        $reason = $canUndo ? null : 'Undo dikunci: sesi sekarang sudah memiliki poin aktif.';
+
+        echo json_encode(['status'=>true, 'data'=>array_merge($base, [
+            'can_undo'=>$canUndo,
+            'reason'=>$reason,
+            'restore_session_id'=>(int)$closed['id'],
+            'restore_semester_id'=>(int)$closed['id_semester'],
+            'restore_semester_name'=>$restore['semester_name'] ?? null,
+            'restore_stase_id'=>$closed['id_stase'] !== null ? (int)$closed['id_stase'] : null,
+            'restore_stase_name'=>$restore['stase_name'] ?? null,
+            'restore_stage_id'=>isset($restore['id_stage']) ? (int)$restore['id_stage'] : null,
+            'restore_stage_name'=>$restore['stage_name'] ?? null,
+            'restore_points'=>$restorePoints,
+        ])]);
+    } catch (Exception $e) {
+        echo json_encode(['status'=>false, 'message'=>$e->getMessage()]);
+    }
+    Yii::app()->end();
+}
+
+public function actionUndoMorbiditasStase()
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $post = json_decode(file_get_contents('php://input'), true);
+
+    foreach (['created_by', 'id_client', 'id_user'] as $field) {
+        if (!is_array($post) || !isset($post[$field]) || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
+            echo json_encode(['status'=>false, 'message'=>$field.' wajib berupa ID positif']);
+            Yii::app()->end();
+        }
+    }
+
+    $db = Yii::app()->dbPrasi;
+    $client = (int)$post['id_client'];
+    $actor = (int)$post['created_by'];
+    $user = (int)$post['id_user'];
+    $tx = $db->beginTransaction();
+
+    try {
+        // Lock PPDS
+        $ppds = $db->createCommand(
+            "SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role
+             WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL
+               AND lower(r.name)='ppds' FOR UPDATE OF u"
+        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
+
+        if (!$ppds) throw new RuntimeException('PPDS tidak ditemukan');
+
+        // Sesi aktif
+        $open = $db->createCommand(
+            'SELECT id, id_semester, id_stase, started_at
+             FROM t_morbiditas_points_history
+             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
+             ORDER BY id DESC LIMIT 1 FOR UPDATE'
+        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
+
+        if (!$open) throw new RuntimeException('Tidak ada sesi aktif untuk di-Undo');
+
+        // Cek poin aktif — harus 0
+        $currentPoints = (int)$db->createCommand(
+            "SELECT COALESCE(SUM(category.points), 0)::int
+             FROM t_logbook lb
+             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
+             INNER JOIN m_action_category category ON category.id=lb.id_category
+             WHERE lb.id_morbiditas_period=:session_id
+               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
+               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
+                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
+        )->bindValue(':session_id', (int)$open['id'])->queryScalar();
+
+        if ($currentPoints !== 0) {
+            throw new RuntimeException('Undo ditolak: sesi sekarang sudah memiliki poin aktif');
+        }
+
+        // Sesi sebelumnya (closed)
+        $restore = $db->createCommand(
+            'SELECT id, id_semester, id_stase, points, started_at
+             FROM t_morbiditas_points_history
+             WHERE id_user=:user AND id_client=:client AND ended_at IS NOT NULL
+             ORDER BY ended_at DESC, id DESC LIMIT 1 FOR UPDATE'
+        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
+
+        if (!$restore) throw new RuntimeException('Tidak ada sesi sebelumnya untuk di-Undo');
+
+        $restoreStase = $restore['id_stase'] !== null ? (int)$restore['id_stase'] : null;
+
+        // Tutup sesi aktif dengan poin 0
+        $db->createCommand(
+            'UPDATE t_morbiditas_points_history SET points=0, ended_at=CURRENT_TIMESTAMP
+             WHERE id=:id AND ended_at IS NULL'
+        )->bindValue(':id', (int)$open['id'])->execute();
+
+        // Buka kembali sesi sebelumnya
+        $db->createCommand(
+            'UPDATE t_morbiditas_points_history SET ended_at=NULL, restored_at=CURRENT_TIMESTAMP
+             WHERE id=:id AND ended_at IS NOT NULL'
+        )->bindValue(':id', (int)$restore['id'])->execute();
+
+        // Update m_user
+        $now = date('Y-m-d H:i:s');
+        $db->createCommand(
+            "UPDATE m_user SET id_semester=:semester, id_stase=:stase,
+                    updated_by=:actor, updated_date=:now
+             WHERE id=:id AND id_client=:client"
+        )->bindValues([
+            ':semester' => (int)$restore['id_semester'],
+            ':stase'    => $restoreStase,
+            ':actor'    => $actor,
+            ':now'      => $now,
+            ':id'       => $user,
+            ':client'   => $client,
+        ])->execute();
+
+        // Hitung poin restore
+        $restorePoints = (int)$db->createCommand(
+            "SELECT COALESCE(SUM(category.points), 0)::int
+             FROM t_logbook lb
+             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
+             INNER JOIN m_action_category category ON category.id=lb.id_category
+             WHERE lb.id_morbiditas_period=:session_id
+               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
+               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
+                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
+        )->bindValue(':session_id', (int)$restore['id'])->queryScalar();
+
+        // Jika snapshot lama lebih tinggi, pakai itu
+        if ((int)$restore['points'] > $restorePoints) {
+            $restorePoints = (int)$restore['points'];
+        }
+
+        $names = $db->createCommand(
+            'SELECT sem.name AS semester_name, st.name AS stase_name,
+                    sem.id_stage, stage.name AS stage_name
+             FROM m_semester sem
+             LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client
+             LEFT JOIN m_stage stage ON stage.id=sem.id_stage
+             WHERE sem.id=:semester AND sem.id_client=:client'
+        )->bindValues([
+            ':semester'=>(int)$restore['id_semester'],
+            ':stase'=>$restoreStase,
+            ':client'=>$client,
+        ])->queryRow();
+
+        $tx->commit();
+
+        echo json_encode([
+            'status'=>true,
+            'message'=>'Semester, Stase, dan poin Morbiditas berhasil dikembalikan',
+            'data'=>[
+                'id_user'=>$user,
+                'id_semester'=>(int)$restore['id_semester'],
+                'semester_name'=>$names['semester_name'] ?? null,
+                'id_stase'=>$restoreStase,
+                'stase_name'=>$names['stase_name'] ?? null,
+                'id_stage'=>isset($names['id_stage']) ? (int)$names['id_stage'] : null,
+                'stage_name'=>$names['stage_name'] ?? null,
+                'total_points'=>$restorePoints,
+            ],
+        ]);
+    } catch (Exception $e) {
+        if ($tx->active) $tx->rollback();
+        echo json_encode(['status'=>false, 'message'=>$e->getMessage()]);
+    }
+    Yii::app()->end();
+}
     // === MORBIDITY ===
 
 
@@ -3250,13 +3572,16 @@ class ApiWebServiceController extends Controller {
         if (!empty($post['start_date'])) {
             $sql .= ' AND tl.date >= :start_date';
             $countSql .= ' AND tl.date >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $sql .= ' AND tl.date <= :end_date';
-            $countSql .= ' AND tl.date <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $sql .= ' AND tl.date < :end_date';
+            $countSql .= ' AND tl.date < :end_date';
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
 
         // 🔥 search filter - ILIKE across multiple fields + staff search
@@ -3575,9 +3900,23 @@ class ApiWebServiceController extends Controller {
         $page   = isset($post['page']) ? (int)$post['page'] : 1;
         $limit  = isset($post['limit']) ? (int)$post['limit'] : 10;
         $offset = ($page - 1) * $limit;
+        
+        $action = MAction::model()->findByAttributes([
+                "id_client" => $post['id_client'],
+                "name"      => "Stase"
+            ]);
 
+        if (!$action) {
+            echo json_encode([
+                'status'  => false,
+                'message' => 'Action Not Found'
+            ]);
+            Yii::app()->end();
+        }
+        
         $params = [
             ':id_client' => $post['id_client'],
+            ':id_action' => $action->id
         ];
 
         $whereClause = "
@@ -3585,7 +3924,7 @@ class ApiWebServiceController extends Controller {
                 tl.deleted_at IS NULL
                 AND tl.id_client = :id_client
                 AND tl.id_semester IS NOT NULL
-                AND tl.id_action = 20
+                AND tl.id_action = :id_action
         ";
 
         if (!empty($post['id_ppds'])) {
@@ -3600,12 +3939,15 @@ class ApiWebServiceController extends Controller {
 
         if (!empty($post['start_date'])) {
             $whereClause .= ' AND tl.date >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $whereClause .= ' AND tl.date <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $whereClause .= ' AND tl.date < :end_date';
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
 
         // 🔥 search filter - ILIKE across multiple fields
@@ -3758,66 +4100,170 @@ class ApiWebServiceController extends Controller {
     }
 
     public function actionCreateStase()
-    {
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
+{
+    $rest_json = file_get_contents("php://input");
+    $post = json_decode($rest_json, true);
 
-        if (
-            !isset($post['id_client']) ||
-            !isset($post['created_by']) ||
-            !isset($post['id_user']) ||
-            !isset($post['id_stase']) ||
-            !isset($post['id_semester']) ||
-            !isset($post['date'])
-        ) {
-            echo json_encode([
-                'status'  => false,
-                'message' => 'Invalid parameter!'
-            ]);
-            Yii::app()->end();
-        }
-
-        try {
-            $action = MAction::model()->find(
-                    'id_client = :id_client AND identifier = :identifier', 
-                    [
-                        ':id_client' => $post['id_client'],
-                        ':identifier' => 'stase'
-                    ]);
-
-            if (!$action) {
-                echo json_encode([
-                    'status'  => false,
-                    'message' => 'Action "stase" not found for the client!'
-                ]);
-                Yii::app()->end();
-            }
-
-            $logbook               = new TLogbook;
-            $logbook->id_client    = $post['id_client'];
-            $logbook->id_action    = $action->id ?? null;
-            $logbook->id_user      = $post['id_user'];
-            $logbook->id_stase     = $post['id_stase'];
-            $logbook->id_semester  = $post['id_semester'];
-            $logbook->date         = $post['date'];
-            $logbook->notes        = $post['notes'] ?? null;
-            $logbook->is_retake    = $post['is_retake'] ?? false;
-            $logbook->created_date = date('Y-m-d H:i:s');
-            $logbook->created_by   = $post['created_by'];
-            $logbook->save(false);
-
-            echo json_encode([
-                'status'  => true,
-                'message' => 'Data berhasil dibuat!',
-            ]);
-        } catch (Exception $e) {
-            echo json_encode([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ]);
-        }
+    if (
+        !isset($post['id_client']) ||
+        !isset($post['created_by']) ||
+        !isset($post['id_user']) ||
+        !isset($post['id_stase']) ||
+        !isset($post['id_semester']) ||
+        !isset($post['date'])
+    ) {
+        echo json_encode([
+            'status'  => false,
+            'message' => 'Invalid parameter!'
+        ]);
         Yii::app()->end();
     }
+
+    $db = Yii::app()->dbPrasi;
+    $tx = $db->beginTransaction();
+    try {
+        $clientId = (int)$post['id_client'];
+        $actorId = (int)$post['created_by'];
+        $ppdsId = (int)$post['id_user'];
+        $staseId = (int)$post['id_stase'];
+        $semesterId = (int)$post['id_semester'];
+
+        // Cari action stase
+        $action = $db->createCommand(
+            "SELECT id FROM m_action WHERE id_client=:client
+             AND (lower(identifier)='stase' OR lower(name)='stase')
+             AND is_milestone=true AND show_on_milestone=true LIMIT 1"
+        )->bindValue(':client', $clientId)->queryRow();
+
+        if (!$action) {
+            throw new RuntimeException('Action "stase" not found for the client!');
+        }
+
+        // Lock PPDS row untuk mencegah concurrent create
+        $ppds = $db->createCommand(
+            "SELECT u.id, u.id_semester, u.id_stase FROM m_user u
+             JOIN m_role r ON r.id=u.id_role
+             WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL
+               AND u.status='Active' AND lower(r.name)='ppds'
+             FOR UPDATE OF u"
+        )->bindValues([':id'=>$ppdsId, ':client'=>$clientId])->queryRow();
+
+        if (!$ppds) {
+            throw new RuntimeException('User PPDS tidak ditemukan untuk client ini');
+        }
+
+        $now = date('Y-m-d H:i:s');
+
+        // INSERT milestone stase
+        $logbookId = $db->createCommand(
+            "INSERT INTO t_logbook
+             (id_action,id_user,id_stase,id_semester,id_client,date,notes,is_retake,
+              verified,verified_status,created_by,created_date)
+             VALUES (:action,:user,:stase,:semester,:client,:date,:notes,:retake,
+                     true,'verified',:created_by,:created_date)
+             RETURNING id"
+        )->bindValues([
+            ':action'   => (int)$action['id'],
+            ':user'     => $ppdsId,
+            ':stase'    => $staseId,
+            ':semester' => $semesterId,
+            ':client'   => $clientId,
+            ':date'     => $post['date'],
+            ':notes'    => isset($post['notes']) && trim((string)$post['notes']) !== '' ? trim((string)$post['notes']) : null,
+            ':retake'   => filter_var($post['is_retake'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false',
+            ':created_by'   => $actorId,
+            ':created_date' => $now,
+        ])->queryScalar();
+
+        if (!$logbookId) {
+            throw new RuntimeException('Gagal membuat milestone Stase');
+        }
+
+        // === MORBIDITAS PERIOD TRANSITION ===
+        // Tutup sesi lama, buka sesi baru dengan poin 0
+
+        // Cari sesi aktif (ended_at IS NULL) untuk PPDS ini
+        $openSession = $db->createCommand(
+            'SELECT id, id_semester, id_stase, started_at, points
+             FROM t_morbiditas_points_history
+             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
+             ORDER BY id DESC LIMIT 1 FOR UPDATE'
+        )->bindValues([':user'=>$ppdsId, ':client'=>$clientId])->queryRow();
+
+        if ($openSession) {
+            // Hitung poin aktif dari Morbiditas terikat sesi ini
+            $currentPoints = $db->createCommand(
+                "SELECT COALESCE(SUM(category.points), 0)::int AS total
+                 FROM t_logbook lb
+                 INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
+                 INNER JOIN m_action_category category ON category.id=lb.id_category
+                 WHERE lb.id_morbiditas_period=:session_id
+                   AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+                   AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
+                   AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
+                        OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
+            )->bindValue(':session_id', (int)$openSession['id'])->queryScalar();
+
+            // Tutup sesi lama: simpan snapshot poin
+            $db->createCommand(
+                'UPDATE t_morbiditas_points_history
+                 SET points=:points, id_stase=COALESCE(:stase, id_stase),
+                     ended_at=CURRENT_TIMESTAMP
+                 WHERE id=:id AND ended_at IS NULL'
+            )->bindValues([
+                ':points' => (int)$currentPoints,
+                ':stase'  => (int)$ppds['id_stase'],
+                ':id'     => (int)$openSession['id'],
+            ])->execute();
+        }
+
+        // Pastikan tidak ada sesi terbuka lain (safety)
+        $db->createCommand(
+            'UPDATE t_morbiditas_points_history SET ended_at=CURRENT_TIMESTAMP
+             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL'
+        )->bindValues([':user'=>$ppdsId, ':client'=>$clientId])->execute();
+
+        // Buka sesi baru dengan poin 0 (seq diisi otomatis oleh trigger)
+        $db->createCommand(
+            "INSERT INTO t_morbiditas_points_history
+             (id_user,id_client,id_semester,id_stase,points,started_at,ended_at)
+             VALUES (:user,:client,:semester,:stase,0,CURRENT_TIMESTAMP,NULL)"
+        )->bindValues([
+            ':user'     => $ppdsId,
+            ':client'   => $clientId,
+            ':semester' => $semesterId,
+            ':stase'    => $staseId,
+        ])->execute();
+
+        // Update m_user: semester dan stase saat ini
+        $db->createCommand(
+            "UPDATE m_user SET id_semester=:semester, id_stase=:stase,
+                    updated_by=:actor, updated_date=:now
+             WHERE id=:id AND id_client=:client"
+        )->bindValues([
+            ':semester' => $semesterId,
+            ':stase'    => $staseId,
+            ':actor'    => $actorId,
+            ':now'      => $now,
+            ':id'       => $ppdsId,
+            ':client'   => $clientId,
+        ])->execute();
+
+        $tx->commit();
+
+        echo json_encode([
+            'status'  => true,
+            'message' => 'Stase berhasil dibuat dan periode Morbiditas diperbarui!',
+        ]);
+    } catch (Exception $e) {
+        if ($tx->active) $tx->rollback();
+        echo json_encode([
+            'status'  => false,
+            'message' => $e->getMessage()
+        ]);
+    }
+    Yii::app()->end();
+}
 
     public function actionUpdateStase()
     {
@@ -4020,13 +4466,13 @@ class ApiWebServiceController extends Controller {
             LEFT JOIN m_stage mst ON mst.id = ms.id_stage
             WHERE mu.id_client = :id_client
                 AND mu.deleted_at IS NULL
-                AND mu.is_show    = :is_show
+                -- AND mu.is_show    = :is_show
                 AND mr.name IN ('ppds', 'staff')
         ";
         
         $command = Yii::app()->db->createCommand($sql);
         $command->bindValue(':id_client', $post['id_client']);
-        $command->bindValue(':is_show', true);
+        // $command->bindValue(':is_show', true);
         $data = $command->queryAll();
 
         echo json_encode([
@@ -4391,13 +4837,16 @@ class ApiWebServiceController extends Controller {
         if (!empty($post['start_date'])) {
             $sql      .= ' AND tl.date >= :start_date';
             $countSql .= ' AND tl.date >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $sql      .= ' AND tl.date <= :end_date';
-            $countSql .= ' AND tl.date <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $sql      .= ' AND tl.date < :end_date';
+            $countSql .= ' AND tl.date < :end_date';
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
 
         if (!empty($post['status'])) {
@@ -5135,6 +5584,7 @@ class ApiWebServiceController extends Controller {
                 COALESCE(v.stase, '-') AS stase,
                 COALESCE(v.status, 'pending') AS status
             FROM v_logbook_summary_general v
+            LEFT JOIN t_logbook tl ON tl.id = v.id
             JOIN m_user u
                 ON u.display_name = v.ppds
                 AND u.id_client = v.id_client
@@ -5144,7 +5594,7 @@ class ApiWebServiceController extends Controller {
                 AND v.date >= :start_date
                 AND v.date < (:end_date::date + INTERVAL '1 day')
             ORDER BY
-                v.date DESC,
+                tl.created_date DESC,
                 v.id DESC
             LIMIT :limit
             OFFSET :offset
@@ -5153,6 +5603,7 @@ class ApiWebServiceController extends Controller {
         $countSql = "
             SELECT COUNT(*)
             FROM v_logbook_summary_general v
+            LEFT JOIN t_logbook tl ON tl.id = v.id
             JOIN m_user u
                 ON u.display_name = v.ppds
                 AND u.id_client = v.id_client
@@ -5204,30 +5655,31 @@ class ApiWebServiceController extends Controller {
         $sort = (isset($post['sort']) && strtolower($post['sort']) === 'asc') ? 'ASC' : 'DESC';
 
         $baseWhere = "
-            FROM v_ppds_scoring_fixed
+            FROM v_ppds_scoring_fixed vp
+            LEFT JOIN t_logbook tl ON tl.id = vp.id_logbook
             WHERE 1=1
         ";
 
         $sql = "
             SELECT
-                id_logbook,
-                ppds,
-                nim,
-                inisial_code,
-                semester,
-                stase,
-                pin,
-                staff,
-                action,
-                date_logbook,
-                title,
-                notes,
-                peran,
-                category,
-                ROUND(psikomotor::numeric, 2) AS psikomotor,
-                ROUND(knowledge::numeric, 2) AS knowledge,
-                ROUND(afektif::numeric, 2) AS afektif,
-                ROUND(total::numeric, 2) AS total
+                vp.id_logbook,
+                vp.ppds,
+                vp.nim,
+                vp.inisial_code,
+                vp.semester,
+                vp.stase,
+                vp.pin,
+                vp.staff,
+                vp.action,
+                vp.date_logbook,
+                vp.title,
+                vp.notes,
+                vp.peran,
+                vp.category,
+                ROUND(vp.psikomotor::numeric, 2) AS psikomotor,
+                ROUND(vp.knowledge::numeric, 2) AS knowledge,
+                ROUND(vp.afektif::numeric, 2) AS afektif,
+                ROUND(vp.total::numeric, 2) AS total
             {$baseWhere}
         ";
 
@@ -5238,84 +5690,87 @@ class ApiWebServiceController extends Controller {
         $params = [];
 
         if (!empty($post['id_client'])) {
-            $sql      .= ' AND id_client = :id_client';
-            $countSql .= ' AND id_client = :id_client';
+            $sql      .= ' AND vp.id_client = :id_client';
+            $countSql .= ' AND vp.id_client = :id_client';
             $params[':id_client'] = $post['id_client'];
         }
 
         if (!empty($post['ppds_name'])) {
-            $sql      .= ' AND ppds = :ppds_name';
-            $countSql .= ' AND ppds = :ppds_name';
+            $sql      .= ' AND vp.ppds = :ppds_name';
+            $countSql .= ' AND vp.ppds = :ppds_name';
             $params[':ppds_name'] = $post['ppds_name'];
         }
 
         if (!empty($post['staff_name'])) {
-            $sql      .= ' AND staff = :staff_name';
-            $countSql .= ' AND staff = :staff_name';
+            $sql      .= ' AND vp.staff = :staff_name';
+            $countSql .= ' AND vp.staff = :staff_name';
             $params[':staff_name'] = $post['staff_name'];
         }
 
         if (!empty($post['activity_name'])) {
-            $sql      .= ' AND action = :activity_name';
-            $countSql .= ' AND action = :activity_name';
+            $sql      .= ' AND vp.action = :activity_name';
+            $countSql .= ' AND vp.action = :activity_name';
             $params[':activity_name'] = $post['activity_name'];
         }
 
         if (!empty($post['stase_name'])) {
-            $sql      .= ' AND stase = :stase_name';
-            $countSql .= ' AND stase = :stase_name';
+            $sql      .= ' AND vp.stase = :stase_name';
+            $countSql .= ' AND vp.stase = :stase_name';
             $params[':stase_name'] = $post['stase_name'];
         }
 
         if (!empty($post['start_date'])) {
-            $sql      .= ' AND date_logbook >= :start_date';
-            $countSql .= ' AND date_logbook >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $sql      .= ' AND vp.date_logbook >= :start_date';
+            $countSql .= ' AND vp.date_logbook >= :start_date';
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $sql      .= ' AND date_logbook <= :end_date';
-            $countSql .= ' AND date_logbook <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $sql      .= ' AND vp.date_logbook <= :end_date';
+            $countSql .= ' AND vp.date_logbook <= :end_date';
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
 
         // 🔥 search filter - ILIKE across multiple fields
         if (!empty($post['search'])) {
             $searchTerm = '%' . $post['search'] . '%';
             $sql      .= ' AND (
-                ppds ILIKE :search
-                OR nim ILIKE :search
-                OR inisial_code ILIKE :search
-                OR semester ILIKE :search
-                OR stase ILIKE :search
-                OR pin ILIKE :search
-                OR staff ILIKE :search
-                OR action ILIKE :search
-                OR title ILIKE :search
-                OR notes ILIKE :search
-                OR peran ILIKE :search
-                OR category ILIKE :search
+                vp.ppds ILIKE :search
+                OR vp.nim ILIKE :search
+                OR vp.inisial_code ILIKE :search
+                OR vp.semester ILIKE :search
+                OR vp.stase ILIKE :search
+                OR vp.pin ILIKE :search
+                OR vp.staff ILIKE :search
+                OR vp.action ILIKE :search
+                OR vp.title ILIKE :search
+                OR vp.notes ILIKE :search
+                OR vp.peran ILIKE :search
+                OR vp.category ILIKE :search
             )';
             $countSql .= ' AND (
-                ppds ILIKE :search
-                OR nim ILIKE :search
-                OR inisial_code ILIKE :search
-                OR semester ILIKE :search
-                OR stase ILIKE :search
-                OR pin ILIKE :search
-                OR staff ILIKE :search
-                OR action ILIKE :search
-                OR title ILIKE :search
-                OR notes ILIKE :search
-                OR peran ILIKE :search
-                OR category ILIKE :search
+                vp.ppds ILIKE :search
+                OR vp.nim ILIKE :search
+                OR vp.inisial_code ILIKE :search
+                OR vp.semester ILIKE :search
+                OR vp.stase ILIKE :search
+                OR vp.pin ILIKE :search
+                OR vp.staff ILIKE :search
+                OR vp.action ILIKE :search
+                OR vp.title ILIKE :search
+                OR vp.notes ILIKE :search
+                OR vp.peran ILIKE :search
+                OR vp.category ILIKE :search
             )';
             $params[':search'] = $searchTerm;
         }
 
         $sql .= "
             ORDER BY
-                date_logbook
+                tl.created_date
                 {$sort}
             LIMIT :limit
             OFFSET :offset
@@ -5392,12 +5847,15 @@ class ApiWebServiceController extends Controller {
     
         if (!empty($post['start_date'])) {
             $sql .= ' AND date_logbook >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
     
         if (!empty($post['end_date'])) {
             $sql .= ' AND date_logbook <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
     
         if (!empty($post['search'])) {
@@ -5508,31 +5966,32 @@ class ApiWebServiceController extends Controller {
         $sort = (isset($post['sort']) && strtolower($post['sort']) === 'asc') ? 'ASC' : 'DESC';
 
         $baseWhere = "
-            FROM v_logbook_summary_general
+            FROM v_logbook_summary_general vl
+            LEFT JOIN t_logbook tl ON tl.id = vl.id
             WHERE 1=1
         ";
 
         $sql = "
             SELECT
-                CONCAT(id, '-', COALESCE(staff, '')) AS row_key,
-                id,
-                date,
-                ppds,
-                nim,
-                action,
-                semester,
-                stase,
-                pin,
-                peran,
-                category,
-                staff,
-                status,
-                attachment,
-                emr_number,
-                diagnosis,
-                treatment,
-                patient,
-                title
+                CONCAT(vl.id, '-', COALESCE(vl.staff, '')) AS row_key,
+                vl.id,
+                vl.date,
+                vl.ppds,
+                vl.nim,
+                vl.action,
+                vl.semester,
+                vl.stase,
+                vl.pin,
+                vl.peran,
+                vl.category,
+                vl.staff,
+                vl.status,
+                vl.attachment,
+                vl.emr_number,
+                vl.diagnosis,
+                vl.treatment,
+                vl.patient,
+                vl.title
             {$baseWhere}
         ";
 
@@ -5543,50 +6002,56 @@ class ApiWebServiceController extends Controller {
         $params = [];
 
         if (!empty($post['id_client'])) {
-            $sql      .= ' AND id_client = :id_client';
-            $countSql .= ' AND id_client = :id_client';
+            $sql      .= ' AND vl.id_client = :id_client';
+            $countSql .= ' AND vl.id_client = :id_client';
             $params[':id_client'] = $post['id_client'];
         }
 
         if (!empty($post['ppds_name'])) {
-            $sql      .= ' AND ppds = :ppds_name';
-            $countSql .= ' AND ppds = :ppds_name';
+            $sql      .= ' AND vl.ppds = :ppds_name';
+            $countSql .= ' AND vl.ppds = :ppds_name';
             $params[':ppds_name'] = $post['ppds_name'];
         }
 
         if (!empty($post['staff_name'])) {
-            $sql      .= ' AND staff = :staff_name';
-            $countSql .= ' AND staff = :staff_name';
+            $sql      .= ' AND vl.staff = :staff_name';
+            $countSql .= ' AND vl.staff = :staff_name';
             $params[':staff_name'] = $post['staff_name'];
         }
 
         if (!empty($post['activity_name'])) {
-            $sql      .= ' AND action = :activity_name';
-            $countSql .= ' AND action = :activity_name';
+            $sql      .= ' AND vl.action = :activity_name';
+            $countSql .= ' AND vl.action = :activity_name';
             $params[':activity_name'] = $post['activity_name'];
+        } else {
+            $sql      .= " AND vl.action != 'Stase'";
+            $countSql .= " AND vl.action != 'Stase'";
         }
 
         if (!empty($post['stase_name'])) {
-            $sql      .= ' AND stase = :stase_name';
-            $countSql .= ' AND stase = :stase_name';
+            $sql      .= ' AND vl.stase = :stase_name';
+            $countSql .= ' AND vl.stase = :stase_name';
             $params[':stase_name'] = $post['stase_name'];
         }
 
         if (!empty($post['start_date'])) {
-            $sql      .= ' AND date >= :start_date';
-            $countSql .= ' AND date >= :start_date';
-            $params[':start_date'] = $post['start_date'];
+            $sql      .= ' AND vl.date >= :start_date';
+            $countSql .= ' AND vl.date >= :start_date';
+            $params[':start_date'] = $post['start_date'] . ' 00:00:00';
         }
 
         if (!empty($post['end_date'])) {
-            $sql      .= ' AND date <= :end_date';
-            $countSql .= ' AND date <= :end_date';
-            $params[':end_date'] = $post['end_date'];
+            $sql      .= ' AND vl.date <= :end_date';
+            $countSql .= ' AND vl.date <= :end_date';
+                        $params[':end_date'] = date(
+                'Y-m-d 00:00:00',
+                strtotime($post['end_date'] . ' +1 day')
+            );;
         }
         
         if (!empty($post['status'])) {
-            $sql      .= ' AND LOWER(status) = :status';
-            $countSql .= ' AND LOWER(status) = :status';
+            $sql      .= ' AND LOWER(vl.status) = :status';
+            $countSql .= ' AND LOWER(vl.status) = :status';
             $params[':status'] = strtolower($post['status']);
         }
 
@@ -5594,43 +6059,43 @@ class ApiWebServiceController extends Controller {
         if (!empty($post['search'])) {
             $searchTerm = '%' . $post['search'] . '%';
             $sql      .= ' AND (
-                ppds ILIKE :search
-                OR nim ILIKE :search
-                OR semester ILIKE :search
-                OR stase ILIKE :search
-                OR pin ILIKE :search
-                OR staff ILIKE :search
-                OR action ILIKE :search
-                OR title ILIKE :search
-                OR peran ILIKE :search
-                OR category ILIKE :search
-                OR patient ILIKE :search
-                OR diagnosis ILIKE :search
-                OR treatment ILIKE :search
-                OR emr_number ILIKE :search
+                vl.ppds ILIKE :search
+                OR vl.nim ILIKE :search
+                OR vl.semester ILIKE :search
+                OR vl.stase ILIKE :search
+                OR vl.pin ILIKE :search
+                OR vl.staff ILIKE :search
+                OR vl.action ILIKE :search
+                OR vl.title ILIKE :search
+                OR vl.peran ILIKE :search
+                OR vl.category ILIKE :search
+                OR vl.patient ILIKE :search
+                OR vl.diagnosis ILIKE :search
+                OR vl.treatment ILIKE :search
+                OR vl.emr_number ILIKE :search
             )';
             $countSql .= ' AND (
-                ppds ILIKE :search
-                OR nim ILIKE :search
-                OR semester ILIKE :search
-                OR stase ILIKE :search
-                OR pin ILIKE :search
-                OR staff ILIKE :search
-                OR action ILIKE :search
-                OR title ILIKE :search
-                OR peran ILIKE :search
-                OR category ILIKE :search
-                OR patient ILIKE :search
-                OR diagnosis ILIKE :search
-                OR treatment ILIKE :search
-                OR emr_number ILIKE :search
+                vl.ppds ILIKE :search
+                OR vl.nim ILIKE :search
+                OR vl.semester ILIKE :search
+                OR vl.stase ILIKE :search
+                OR vl.pin ILIKE :search
+                OR vl.staff ILIKE :search
+                OR vl.action ILIKE :search
+                OR vl.title ILIKE :search
+                OR vl.peran ILIKE :search
+                OR vl.category ILIKE :search
+                OR vl.patient ILIKE :search
+                OR vl.diagnosis ILIKE :search
+                OR vl.treatment ILIKE :search
+                OR vl.emr_number ILIKE :search
             )';
             $params[':search'] = $searchTerm;
         }
 
         $sql .= "
             ORDER BY
-                date
+                tl.created_date
                 {$sort}
             LIMIT :limit
             OFFSET :offset
@@ -5723,6 +6188,84 @@ class ApiWebServiceController extends Controller {
             'message' => 'Success',
             'data'    => $data,
         ]);
+    }
+    
+    public function actionUpdateMultipleLogbook()
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+            http_response_code(204);
+            Yii::app()->end();
+        }
+    
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+    
+        if (
+            !isset($post['id_client']) ||
+            !isset($post['id_stase']) ||
+            !isset($post['updated_by']) ||
+            !isset($post['data']) ||
+            !is_array($post['data'])
+        ) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Invalid parameter!'
+            ]);
+            Yii::app()->end();
+        }
+    
+        $id_logbooks = [];
+    
+        foreach ($post['data'] as $item) {
+            $parts = explode('-', $item, 2);
+            $id = (int)$parts[0];
+    
+            if ($id > 0) {
+                $id_logbooks[$id] = $id;
+            }
+        }
+    
+        $transaction = Yii::app()->db->beginTransaction();
+    
+        try {
+            $updated = 0;
+    
+            foreach ($id_logbooks as $id) {
+                $updated += Yii::app()->db->createCommand()->update(
+                    't_logbook',
+                    [
+                        'id_stase' => $post['id_stase'],
+                        'updated_by' => $post['updated_by'],
+                        'updated_date' => date('Y-m-d H:i:s')
+                    ],
+                    'id = :id AND id_client = :id_client',
+                    [
+                        ':id' => $id,
+                        ':id_client' => $post['id_client']
+                    ]
+                );
+            }
+    
+            $transaction->commit();
+    
+            echo json_encode([
+                'status' => true,
+                'message' => 'Berhasil memperbarui data logbook.',
+                'data' => [
+                    'total_logbook' => count($id_logbooks),
+                    'total_updated' => $updated
+                    ]
+            ]);
+        } catch (Exception $e) {
+            $transaction->rollback();
+    
+            echo json_encode([
+                'status' => false,
+                'message' => 'Gagal memperbarui data logbook.'
+            ]);
+        }
+    
+        Yii::app()->end();
     }
     // === REKAP STAGE ===
 }
