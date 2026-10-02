@@ -94,6 +94,91 @@ public function actionLogin()
 }
 
 
+public function actionGetMenuConfig()
+{
+    header('Content-Type: application/json');
+    $post = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($post) || !isset($post['id_user']) || !isset($post['id_client'])) {
+        echo json_encode(array('success' => false, 'message' => 'id_user dan id_client wajib diisi'));
+        Yii::app()->end();
+    }
+    try {
+        $sql = "SELECT id_action FROM t_menu WHERE id_user = :id_user AND id_client = :id_client";
+        $rows = Yii::app()->dbPrasi->createCommand($sql)
+            ->bindValue(':id_user', (string)$post['id_user'])
+            ->bindValue(':id_client', (int)$post['id_client'])
+            ->queryAll();
+
+        $idActions = array();
+        foreach ($rows as $row) {
+            $idActions[] = (int)$row['id_action'];
+        }
+
+        echo json_encode(array('success' => true, 'data' => $idActions));
+    } catch (Throwable $e) {
+        Yii::log('GetMenuConfig failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
+        echo json_encode(array('success' => false, 'message' => 'Gagal memuat konfigurasi menu'));
+    }
+    Yii::app()->end();
+}
+
+
+public function actionSaveMenuConfig()
+{
+    header('Content-Type: application/json');
+    $post = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($post) || !isset($post['id_user']) || !isset($post['id_client']) || !isset($post['created_by']) || !isset($post['id_actions'])) {
+        echo json_encode(array('success' => false, 'message' => 'id_user, id_client, created_by, dan id_actions wajib diisi'));
+        Yii::app()->end();
+    }
+
+    $idUser = (string)$post['id_user'];
+    $idClient = (int)$post['id_client'];
+    $createdBy = (int)$post['created_by'];
+    $idActions = $post['id_actions'];
+
+    if (!is_array($idActions)) {
+        echo json_encode(array('success' => false, 'message' => 'id_actions harus berupa array'));
+        Yii::app()->end();
+    }
+
+    $db = Yii::app()->dbPrasi;
+    $transaction = $db->beginTransaction();
+    try {
+        // Delete existing menu config for this user and client
+        $db->createCommand("DELETE FROM t_menu WHERE id_user = :id_user AND id_client = :id_client")
+            ->bindValue(':id_user', $idUser)
+            ->bindValue(':id_client', $idClient)
+            ->execute();
+
+        // Insert new menu config rows
+        $now = date('Y-m-d H:i:s');
+        foreach ($idActions as $idAction) {
+            $idAction = (int)$idAction;
+            if ($idAction <= 0) continue;
+            $db->createCommand(
+                "INSERT INTO t_menu (id_user, id_client, id_action, created_by, updated_date, updated_by) VALUES (:id_user, :id_client, :id_action, :created_by, :updated_date, :updated_by)"
+            )
+                ->bindValue(':id_user', $idUser)
+                ->bindValue(':id_client', $idClient)
+                ->bindValue(':id_action', $idAction)
+                ->bindValue(':created_by', $createdBy)
+                ->bindValue(':updated_date', $now)
+                ->bindValue(':updated_by', $createdBy)
+                ->execute();
+        }
+
+        $transaction->commit();
+        echo json_encode(array('success' => true, 'message' => 'Konfigurasi menu berhasil disimpan'));
+    } catch (Throwable $e) {
+        $transaction->rollback();
+        Yii::log('SaveMenuConfig failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
+        echo json_encode(array('success' => false, 'message' => 'Gagal menyimpan konfigurasi menu'));
+    }
+    Yii::app()->end();
+}
+
+
 
 /* Add this method once inside ApiMobileServiceController.
  * Route: apiMobileService/getDashboardMorbiditasState
@@ -607,7 +692,6 @@ public function actionGetLogbook()
             $roleFilter = 't.id_user = :user_id';
             $params[':user_id'] = (string)$post['user_id'];
         } elseif ($role === 'staff') {
-            // Prasi-Bun: Staff sees Exam records created by that Staff user.
             if ($isExamAction) {
                 $roleFilter = "mu.is_show = true AND mu.status = 'Active' AND t.created_by = :user_id";
                 $params[':user_id'] = (string)$post['user_id'];
@@ -666,10 +750,13 @@ public function actionGetLogbook()
         $whereSql = implode(' AND ', $where);
         $total = (int)$db->createCommand('SELECT COUNT(*) FROM t_logbook t LEFT JOIN m_user mu ON mu.id=t.id_user AND mu.deleted_at IS NULL WHERE '.$whereSql)->bindValues($params)->queryScalar();
         $sql = 'SELECT t.*, mu.display_name AS _peserta_display_name, mh.id AS _hospital_id, mh.name AS _hospital_name, '
-            . 'mac.id AS _category_id, mac.name AS _category_name, ms.id AS _stase_id, ms.name AS _stase_name '
+            . 'mac.id AS _category_id, mac.name AS _category_name, ms.id AS _stase_id, ms.name AS _stase_name, '
+            . 'creator.display_name AS _created_by_name '
             . 'FROM t_logbook t LEFT JOIN m_user mu ON mu.id=t.id_user AND mu.deleted_at IS NULL '
             . 'LEFT JOIN m_hospital mh ON mh.id=t.id_hospital LEFT JOIN m_action_category mac ON mac.id=t.id_category '
-            . 'LEFT JOIN m_stase ms ON ms.id=t.id_stase WHERE '.$whereSql.' ORDER BY t.date DESC, t.created_date DESC LIMIT :limit OFFSET :offset';
+            . 'LEFT JOIN m_stase ms ON ms.id=t.id_stase '
+            . 'LEFT JOIN m_user creator ON creator.id=t.created_by '
+            . 'WHERE '.$whereSql.' ORDER BY t.date DESC, t.created_date DESC LIMIT :limit OFFSET :offset';
         $command = $db->createCommand($sql)->bindValues($params);
         $command->bindValue(':limit', $limit, PDO::PARAM_INT); $command->bindValue(':offset', $offset, PDO::PARAM_INT);
         $rows = $command->queryAll();
@@ -692,6 +779,7 @@ public function actionGetLogbook()
             $logbook['m_stase'] = $row['_stase_id'] ? array('id'=>$row['_stase_id'], 'name'=>$row['_stase_name']) : null;
             $logbook['t_logbook_status'] = isset($statusByLogbook[$row['id']]) ? $statusByLogbook[$row['id']] : array();
             $logbook['t_logbook_asm'] = isset($asmByLogbook[$row['id']]) ? $asmByLogbook[$row['id']] : array();
+            $logbook['created_by_name'] = $row['_created_by_name'];
             $data[] = $logbook;
         }
         echo json_encode(array('success'=>true, 'data'=>$data, 'total'=>$total, 'page'=>$page, 'limit'=>$limit, 'has_more'=>($offset + count($data)) < $total));
@@ -700,7 +788,7 @@ public function actionGetLogbook()
         echo json_encode(array('success'=>false, 'message'=>'Gagal memuat data logbook'));
     }
     Yii::app()->end();
-}
+}   
 
 
     
@@ -2543,6 +2631,7 @@ public function actionGetListExplorePpds()
 
     Yii::app()->end();
 }
+
     
     public function actionGetLogbookIdCustomer() {
     header('Content-Type: application/json');

@@ -2967,11 +2967,15 @@ class ApiWebServiceController extends Controller {
             Yii::app()->end();
         }
     
-        // === STAFF STATUS ===
+        // === STAFF STATUS (now includes IDs for verifier reassignment) ===
         $staffSql = '
             SELECT
+                tls.id AS status_id,
+                tls.id_user,
+                tls.id_action_role,
                 mu.display_name AS name,
                 mar.role AS role,
+                mar.identifier AS role_identifier,
                 tls.status,
                 tls.verify_notes
             FROM t_logbook_status tls
@@ -2987,7 +2991,7 @@ class ApiWebServiceController extends Controller {
                 AND tls.deleted_at IS NULL
                 AND mar.role != \'Peserta\'
     
-            ORDER BY mu.display_name';
+            ORDER BY tls.id';
     
         $staffCommand = Yii::app()->db->createCommand($staffSql);
         $staffCommand->bindValue(':id_logbook', $post['id']);
@@ -3000,6 +3004,129 @@ class ApiWebServiceController extends Controller {
             'status' => true,
             'data' => $data
         ]);
+    }
+    
+    
+    public function actionUpdateMorbiditasVerifier() {
+        header('Content-Type: application/json; charset=utf-8');
+        $rest_json = file_get_contents("php://input");
+        $post = json_decode($rest_json, true);
+
+        // Validate required fields
+        $required = ['id_logbook', 'status_id', 'new_id_user'];
+        foreach ($required as $field) {
+            if (!isset($post[$field]) || !is_numeric($post[$field])) {
+                echo json_encode([
+                    'status' => false,
+                    'message' => 'Parameter ' . $field . ' wajib diisi dan berupa angka!'
+                ]);
+                Yii::app()->end();
+            }
+        }
+
+        $idLogbook  = (int) $post['id_logbook'];
+        $statusId   = (int) $post['status_id'];
+        $newIdUser  = (int) $post['new_id_user'];
+
+        // 1. Verify the status row exists and belongs to the logbook
+        $statusRow = Yii::app()->db->createCommand('
+            SELECT
+                tls.id,
+                tls.id_logbook,
+                tls.id_user,
+                tls.status,
+                tls.id_action_role,
+                mar.role,
+                mar.identifier AS role_identifier,
+                l.id_user AS logbook_owner_id
+            FROM t_logbook_status tls
+            INNER JOIN m_action_role mar ON mar.id = tls.id_action_role
+            INNER JOIN t_logbook l ON l.id = tls.id_logbook
+            WHERE
+                tls.id = :status_id
+                AND tls.id_logbook = :id_logbook
+                AND tls.deleted_at IS NULL
+                AND l.deleted_at IS NULL
+        ')
+        ->bindValue(':status_id', $statusId)
+        ->bindValue(':id_logbook', $idLogbook)
+        ->queryRow();
+
+        if (!$statusRow) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Status verifikasi tidak ditemukan atau tidak sesuai dengan logbook!'
+            ]);
+            Yii::app()->end();
+        }
+
+        // 2. Reject if already verified
+        if (strtolower($statusRow['status']) === 'verified') {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Tidak dapat mengubah verifier yang sudah berstatus verified!'
+            ]);
+            Yii::app()->end();
+        }
+
+        // 3. Validate the new user exists and is active
+        $newUser = Yii::app()->db->createCommand('
+            SELECT id, display_name, id_client, status
+            FROM m_user
+            WHERE
+                id = :id_user
+                AND deleted_at IS NULL
+        ')
+        ->bindValue(':id_user', $newIdUser)
+        ->queryRow();
+
+        if (!$newUser) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'User yang dipilih tidak ditemukan atau tidak aktif!'
+            ]);
+            Yii::app()->end();
+        }
+
+        // 4. Validate same client: get the logbook owner's client
+        $logbookOwner = Yii::app()->db->createCommand('
+            SELECT mu.id_client
+            FROM m_user mu
+            WHERE mu.id = :id_user
+        ')
+        ->bindValue(':id_user', $statusRow['logbook_owner_id'])
+        ->queryRow();
+
+        if ($logbookOwner && $newUser['id_client'] != $logbookOwner['id_client']) {
+            echo json_encode([
+                'status' => false,
+                'message' => 'User yang dipilih tidak berada di client yang sama!'
+            ]);
+            Yii::app()->end();
+        }
+
+        // 5. Update the verifier assignment
+        $rowsAffected = Yii::app()->db->createCommand('
+            UPDATE t_logbook_status
+            SET id_user = :new_id_user,
+                date_time = NOW()
+            WHERE id = :status_id
+        ')
+        ->bindValue(':new_id_user', $newIdUser)
+        ->bindValue(':status_id', $statusId)
+        ->execute();
+
+        if ($rowsAffected > 0) {
+            echo json_encode([
+                'status' => true,
+                'message' => 'Verifier berhasil diubah menjadi ' . $newUser['display_name'] . '!'
+            ]);
+        } else {
+            echo json_encode([
+                'status' => false,
+                'message' => 'Gagal mengubah verifier!'
+            ]);
+        }
     }
     
     
@@ -4180,7 +4307,9 @@ public function actionUndoMorbiditasStase()
         }
 
         // === MORBIDITAS PERIOD TRANSITION ===
-        // Tutup sesi lama, buka sesi baru dengan poin 0
+        // Transition hanya terjadi saat SEMESTER berubah, sama seperti Mobile.
+        // Jika hanya stase yang berubah (semester tetap), poin aktif tidak direset.
+        if ((int)$ppds['id_semester'] !== $semesterId) {
 
         // Cari sesi aktif (ended_at IS NULL) untuk PPDS ini
         $openSession = $db->createCommand(
@@ -4234,6 +4363,7 @@ public function actionUndoMorbiditasStase()
             ':semester' => $semesterId,
             ':stase'    => $staseId,
         ])->execute();
+        } // end if semester berubah
 
         // Update m_user: semester dan stase saat ini
         $db->createCommand(
@@ -4264,6 +4394,7 @@ public function actionUndoMorbiditasStase()
     }
     Yii::app()->end();
 }
+
 
     public function actionUpdateStase()
     {
