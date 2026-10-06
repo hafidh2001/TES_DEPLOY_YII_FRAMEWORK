@@ -94,6 +94,173 @@ public function actionLogin()
 }
 
 
+public function actionWriteAuditTrail()
+{
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $post = json_decode(file_get_contents('php://input'), true);
+        $this->writeMobileAuditTrail(Yii::app()->dbPrasi, $post);
+        echo json_encode(array('success' => true));
+    } catch (Exception $e) {
+        // Do not expose database messages or request data.
+        echo json_encode(array('success' => false, 'message' => 'Audit tidak dapat disimpan'));
+    }
+    Yii::app()->end();
+}
+
+private function mobileAuditPositiveId($value)
+{
+    if ((!is_int($value) && !is_string($value)) || !preg_match('/^[1-9][0-9]*$/', (string)$value)
+        || strlen((string)$value) > 10 || (float)$value > 2147483647) {
+        throw new InvalidArgumentException('ID tidak valid');
+    }
+    return (int)$value;
+}
+
+private function writeMobileAuditTrail($db, $post)
+{
+    if (!is_array($post)) throw new InvalidArgumentException('Payload tidak valid');
+    $user = $this->mobileAuditPositiveId(isset($post['id_user']) ? $post['id_user'] : null);
+    $client = $this->mobileAuditPositiveId(isset($post['id_client']) ? $post['id_client'] : null);
+    $type = isset($post['type']) ? $post['type'] : 'visit';
+    if (!in_array($type, array('visit', 'action'), true)) throw new InvalidArgumentException('Type tidak valid');
+    $actor = $db->createCommand("SELECT id FROM m_user WHERE id=:user AND id_client=:client AND status='Active' AND deleted_at IS NULL")
+        ->bindValues(array(':user' => $user, ':client' => $client))->queryRow();
+    if (!$actor) throw new InvalidArgumentException('User tidak valid');
+
+    $input = isset($post['meta']) ? $post['meta'] : array();
+    if (!is_array($input)) throw new InvalidArgumentException('Meta tidak valid');
+    $meta = array();
+    // Explicit allowlist. Ignore unknown keys, including raw forms/notes/passwords.
+    if (isset($input['screen'])) {
+        if (!is_string($input['screen']) || !preg_match('/^[A-Za-z0-9 _.\/-]{1,80}$/D', $input['screen'])) throw new InvalidArgumentException('Screen tidak valid');
+        $meta['screen'] = $input['screen'];
+    }
+    foreach (array('id_action', 'id_logbook') as $key) {
+        if (isset($input[$key])) $meta[$key] = $this->mobileAuditPositiveId($input[$key]);
+    }
+    $verbs = array('Create', 'Update', 'Delete', 'Verify', 'Reject', 'Unverify', 'Verify All', 'Undo');
+    if (isset($input['verb'])) {
+        if (!in_array($input['verb'], $verbs, true)) throw new InvalidArgumentException('Verb tidak valid');
+        $meta['verb'] = $input['verb'];
+    }
+    if (isset($input['count'])) {
+        if (!is_int($input['count']) || $input['count'] < 0 || $input['count'] > 2147483647) throw new InvalidArgumentException('Count tidak valid');
+        $meta['count'] = $input['count'];
+    }
+    $actionId = isset($meta['id_action']) ? $meta['id_action'] : null;
+    if (isset($meta['id_logbook'])) {
+        // Archived rows remain valid telemetry targets; never substitute status IDs.
+        $logbook = $db->createCommand('SELECT id,id_action FROM t_logbook WHERE id=:id AND id_client=:client')
+            ->bindValues(array(':id' => $meta['id_logbook'], ':client' => $client))->queryRow();
+        if (!$logbook || ($actionId !== null && $actionId !== (int)$logbook['id_action'])) throw new InvalidArgumentException('Logbook tidak valid');
+        $actionId = (int)$logbook['id_action'];
+        $meta['id_action'] = $actionId;
+    }
+    $actionName = 'Logbook';
+    if ($actionId !== null) {
+        $action = $db->createCommand('SELECT name FROM m_action WHERE id=:id AND id_client=:client')
+            ->bindValues(array(':id' => $actionId, ':client' => $client))->queryRow();
+        if (!$action) throw new InvalidArgumentException('Action tidak valid');
+        $actionName = trim((string)$action['name']);
+        if ($actionName === '') $actionName = 'Logbook';
+    }
+    if ($type === 'action') {
+        if (!isset($meta['verb'])) throw new InvalidArgumentException('Verb wajib diisi');
+        $activity = $meta['verb'].' '.$actionName;
+    } else {
+        // Caller supplies fixed navigation labels, never user-entered content.
+        $activity = isset($post['activity']) ? $post['activity'] : '';
+        if (!is_string($activity) || !preg_match('/^[A-Za-z0-9 _.\/:()\-]{1,160}$/D', $activity)) throw new InvalidArgumentException('Activity tidak valid');
+        $activity = trim($activity);
+        if ($activity === '') throw new InvalidArgumentException('Activity wajib diisi');
+    }
+    $ip = isset($_SERVER['REMOTE_ADDR']) && filter_var($_SERVER['REMOTE_ADDR'], FILTER_VALIDATE_IP) ? $_SERVER['REMOTE_ADDR'] : null;
+    // timestamptz stores the UTC instant; CURRENT_TIMESTAMP is server-owned.
+    // Never trust X-Forwarded-For or arbitrary client forwarding headers.
+    $db->createCommand('INSERT INTO t_audit_trails (activity,ip_user,id_user,timestamp,type,meta,id_client) VALUES (:activity,:ip,:user,CURRENT_TIMESTAMP,:type,CAST(:meta AS jsonb),:client)')
+        ->bindValues(array(':activity' => $activity, ':ip' => $ip, ':user' => $user, ':type' => $type,
+            ':meta' => json_encode((object)$meta), ':client' => $client))->execute();
+}
+
+
+
+
+public function actionGetProfile()
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $post = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($post) || !isset($post['id_user']) || !isset($post['id_client'])) {
+        echo json_encode(array('success' => false, 'message' => 'id_user dan id_client wajib diisi'));
+        Yii::app()->end();
+    }
+
+    $idUser = (int)$post['id_user'];
+    $idClient = (int)$post['id_client'];
+
+    if ($idUser <= 0 || $idClient <= 0) {
+        echo json_encode(array('success' => false, 'message' => 'id_user dan id_client harus berupa ID positif'));
+        Yii::app()->end();
+    }
+
+    try {
+        $db = Yii::app()->dbPrasi;
+
+        // Fetch user with current semester/stase from m_user
+        $sql = "
+            SELECT
+                u.id,
+                u.display_name,
+                u.username,
+                u.code,
+                u.address,
+                u.gender,
+                u.date_of_birth,
+                u.id_client,
+                u.id_role,
+                u.id_semester,
+                u.id_stase,
+                r.name AS role_name,
+                c.name AS client_name,
+                sem.name AS semester_name,
+                st.name AS stase_name
+            FROM m_user u
+            LEFT JOIN m_role r ON r.id = u.id_role
+            LEFT JOIN m_client c ON c.id = u.id_client
+            LEFT JOIN m_semester sem ON sem.id = u.id_semester
+            LEFT JOIN m_stase st ON st.id = u.id_stase
+            WHERE u.id = :id_user
+              AND u.id_client = :id_client
+              AND u.is_active = true
+            LIMIT 1
+        ";
+
+        $user = $db->createCommand($sql)
+            ->bindValue(':id_user', $idUser)
+            ->bindValue(':id_client', $idClient)
+            ->queryRow();
+
+        if (!$user) {
+            echo json_encode(array('success' => false, 'message' => 'User tidak ditemukan atau tidak aktif'));
+            Yii::app()->end();
+        }
+
+        // Never expose sensitive fields
+        unset($user['password'], $user['email'], $user['phone'], $user['token']);
+
+        echo json_encode(array(
+            'success' => true,
+            'data' => $user,
+        ));
+    } catch (Exception $e) {
+        Yii::log('GetProfile failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
+        echo json_encode(array('success' => false, 'message' => 'Gagal memuat profil'));
+    }
+    Yii::app()->end();
+}
+
+
+
 public function actionGetMenuConfig()
 {
     header('Content-Type: application/json');
@@ -682,13 +849,28 @@ public function actionGetLogbook()
     $db = Yii::app()->dbPrasi;
 
     try {
-        $actionForList = $db->createCommand('SELECT is_exam FROM m_action WHERE id=:id AND id_client=:client')
+        $actionForList = $db->createCommand('SELECT is_exam, identifier, name FROM m_action WHERE id=:id AND id_client=:client')
             ->bindValues(array(':id'=>(int)$post['id_action'], ':client'=>(int)$post['id_client']))->queryRow();
         if (!$actionForList) throw new RuntimeException('action tidak ditemukan untuk client ini');
         $isExamAction = $this->createLogbookFlag($actionForList, 'is_exam');
         $params = array(':id_action'=>(string)$post['id_action'], ':id_client'=>(string)$post['id_client']);
 
-        if ($role === 'ppds') {
+        // Legacy stateless identity: validate tenant/role, not an authenticated token.
+        if (array_key_exists('customer_id', $post)) {
+            if (!preg_match('/^[1-9][0-9]*$/', (string)$post['customer_id'])) throw new RuntimeException('PPDS tidak valid');
+            $actor = $db->createCommand("SELECT u.id, r.name AS role_name FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL AND u.is_show=true AND u.status='Active'")
+                ->bindValues(array(':id'=>(int)$post['user_id'], ':client'=>(int)$post['id_client']))->queryRow();
+            $actorRole = $actor ? strtolower(trim($actor['role_name'])) : '';
+            if (!$actor || !in_array($actorRole, array('ppds','staff','staff jejaring','admin','institusi'), true)) throw new RuntimeException('Akses Explore tidak tersedia');
+            if ($role === 'ppds' && (int)$post['user_id'] !== (int)$post['customer_id']) throw new RuntimeException('PPDS hanya dapat melihat logbook sendiri');
+            if ($actorRole === 'ppds' && (int)$post['user_id'] !== (int)$post['customer_id']) throw new RuntimeException('PPDS hanya dapat melihat logbook sendiri');
+            $target = $db->createCommand("SELECT u.id FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL AND u.is_show=true AND u.status='Active' AND LOWER(TRIM(r.name))='ppds'")
+                ->bindValues(array(':id'=>(int)$post['customer_id'], ':client'=>(int)$post['id_client']))->queryRow();
+            if (!$target) throw new RuntimeException('PPDS tidak tersedia untuk client ini');
+            // Explore is participant-scoped, never scoped to the viewer's verifier assignments.
+            $roleFilter = 't.id_user = :customer_id';
+            $params[':customer_id'] = (string)$post['customer_id'];
+        } elseif ($role === 'ppds') {
             $roleFilter = 't.id_user = :user_id';
             $params[':user_id'] = (string)$post['user_id'];
         } elseif ($role === 'staff') {
@@ -748,6 +930,26 @@ public function actionGetLogbook()
             $where[] = 't.is_presentation = CAST(:is_presentation AS boolean)'; $params[':is_presentation'] = $presentation;
         }
         $whereSql = implode(' AND ', $where);
+        $categoryAggregates = array();
+        if (!empty($post['category_aggregates'])) {
+            if (!preg_match('/bimbingan[-_\s]*operasi/i', $actionForList['identifier'].' '.$actionForList['name'])) throw new RuntimeException('Agregat hanya tersedia untuk Bimbingan Operasi');
+            // Exactly the same tenant, target and active filters as COUNT/page, without LIMIT/OFFSET.
+            $aggregateSql = "SELECT mac.id, mac.name AS label, COALESCE(a.count,0) AS count, "
+                . "COALESCE(a.presentation_count,0) AS presentation_count, COALESCE(a.presented_count,0) AS presented_count "
+                . "FROM m_action_category mac LEFT JOIN (SELECT t.id_category, COUNT(*) AS count, "
+                . "COUNT(*) FILTER (WHERE t.is_presentation IS TRUE) AS presentation_count, "
+                . "COUNT(*) FILTER (WHERE t.is_presentation IS TRUE AND (t.verified IS TRUE OR t.verified_status = 'verified')) AS presented_count "
+                . "FROM t_logbook t LEFT JOIN m_user mu ON mu.id=t.id_user AND mu.deleted_at IS NULL WHERE ".$whereSql." GROUP BY t.id_category) a ON a.id_category=mac.id "
+                . "WHERE mac.id_action=:aggregate_action AND mac.id_client=:aggregate_client ORDER BY count DESC, mac.name ASC";
+            $aggregateParams = $params;
+            $aggregateParams[':aggregate_action'] = (int)$post['id_action'];
+            $aggregateParams[':aggregate_client'] = (int)$post['id_client'];
+            $aggregateRows = $db->createCommand($aggregateSql)->bindValues($aggregateParams)->queryAll();
+            foreach ($aggregateRows as $category) {
+                $categoryAggregates[] = array('id'=>(int)$category['id'], 'label'=>$category['label'], 'count'=>(int)$category['count'],
+                    'presentationCount'=>(int)$category['presentation_count'], 'presentedCount'=>(int)$category['presented_count']);
+            }
+        }
         $total = (int)$db->createCommand('SELECT COUNT(*) FROM t_logbook t LEFT JOIN m_user mu ON mu.id=t.id_user AND mu.deleted_at IS NULL WHERE '.$whereSql)->bindValues($params)->queryScalar();
         $sql = 'SELECT t.*, mu.display_name AS _peserta_display_name, mh.id AS _hospital_id, mh.name AS _hospital_name, '
             . 'mac.id AS _category_id, mac.name AS _category_name, ms.id AS _stase_id, ms.name AS _stase_name, '
@@ -782,13 +984,14 @@ public function actionGetLogbook()
             $logbook['created_by_name'] = $row['_created_by_name'];
             $data[] = $logbook;
         }
-        echo json_encode(array('success'=>true, 'data'=>$data, 'total'=>$total, 'page'=>$page, 'limit'=>$limit, 'has_more'=>($offset + count($data)) < $total));
+        echo json_encode(array('success'=>true, 'data'=>$data, 'total'=>$total, 'page'=>$page, 'limit'=>$limit, 'has_more'=>($offset + count($data)) < $total, 'bimbingan_categories'=>$categoryAggregates));
     } catch (Throwable $e) {
         Yii::log('GetLogbook failed: '.$e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
         echo json_encode(array('success'=>false, 'message'=>'Gagal memuat data logbook'));
     }
     Yii::app()->end();
-}   
+}
+  
 
 
     
@@ -1278,7 +1481,7 @@ public function actionGetTodo()
 
     
     
-    public function actionGetLogbookById() {
+        public function actionGetLogbookById() {
         header('Content-Type: application/json');
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
@@ -1448,8 +1651,9 @@ public function actionGetTodo()
                 ->queryAll();
     
             // t_logbook_attachment
-            $attachSql = "SELECT * FROM t_logbook_attachment WHERE id_logbook = :id_logbook";
+            $attachSql = "SELECT * FROM t_logbook_attachment WHERE id_logbook = :id_logbook AND id_client = :attachment_client AND deleted_at IS NULL";
             $data['t_logbook_attachment'] = Yii::app()->dbPrasi->createCommand($attachSql)
+                ->bindValue(':attachment_client', $row['id_client'])
                 ->bindValue(':id_logbook', $post['id'])
                 ->queryAll();
     
@@ -1519,6 +1723,8 @@ public function actionGetTodo()
     
         Yii::app()->end();
     }
+
+
     
     
     public function actionVerifyAllTodo()
@@ -1898,10 +2104,35 @@ public function actionArchiveMilestone()
             Yii::app()->end();
         }
     }
-    if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string)$post['date'])) {
-        echo json_encode(array('success' => false, 'message' => 'date harus berformat YYYY-MM-DD HH:mm:ss'));
+    // Interpret offsetless mobile dates as WIB, not the PHP/DB session timezone.
+    // Explicit offsets (or Z) retain their instant; bind an offset on create AND edit.
+    $dateInput = $post['date'];
+    if (!is_string($dateInput) || !preg_match('/\A([0-9]{4})-([0-9]{2})-([0-9]{2})[ T]([0-9]{2}):([0-9]{2}):([0-9]{2})(Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))?\z/', $dateInput, $dateParts)) {
+        echo json_encode(array('success' => false, 'message' => 'date harus berformat YYYY-MM-DD HH:mm:ss, dengan offset opsional seperti +07:00 atau Z'));
         Yii::app()->end();
+        return;
     }
+    if (!checkdate((int)$dateParts[2], (int)$dateParts[3], (int)$dateParts[1])
+        || (int)$dateParts[4] > 23 || (int)$dateParts[5] > 59 || (int)$dateParts[6] > 59) {
+        echo json_encode(array('success' => false, 'message' => 'date tidak valid'));
+        Yii::app()->end();
+        return;
+    }
+    $dateText = substr($dateInput, 0, 10) . ' ' . substr($dateInput, 11, 8);
+    $dateOffset = isset($dateParts[7]) ? $dateParts[7] : '';
+    $dateFormat = '!Y-m-d H:i:s';
+    if ($dateOffset !== '') {
+        $dateText .= $dateOffset === 'Z' ? '+00:00' : $dateOffset;
+        $dateFormat .= 'P';
+    }
+    $parsedDate = DateTime::createFromFormat($dateFormat, $dateText, new DateTimeZone('Asia/Jakarta'));
+    $dateErrors = DateTime::getLastErrors();
+    if ($parsedDate === false || ($dateErrors !== false && ($dateErrors['warning_count'] > 0 || $dateErrors['error_count'] > 0))) {
+        echo json_encode(array('success' => false, 'message' => 'date tidak valid'));
+        Yii::app()->end();
+        return;
+    }
+    $dateValue = $parsedDate->format('Y-m-d H:i:sP');
 
     $db = Yii::app()->dbPrasi;
     $clientId = (int)$post['id_client'];
@@ -1966,7 +2197,7 @@ public function actionArchiveMilestone()
             $command->bindValue(':id_user', $ppdsId, PDO::PARAM_INT);
             $command->bindValue(':id_stase', $staseId, PDO::PARAM_INT);
             $command->bindValue(':id_semester', $semesterId, PDO::PARAM_INT);
-            $command->bindValue(':date', $post['date'], PDO::PARAM_STR);
+            $command->bindValue(':date', $dateValue, PDO::PARAM_STR);
             $notes === null ? $command->bindValue(':notes', null, PDO::PARAM_NULL) : $command->bindValue(':notes', $notes, PDO::PARAM_STR);
             $command->bindValue(':is_retake', $isRetake, PDO::PARAM_BOOL);
             $command->bindValue(':updated_by', $actorId, PDO::PARAM_INT);
@@ -1988,7 +2219,7 @@ public function actionArchiveMilestone()
             $command->bindValue(':id_stase', $staseId, PDO::PARAM_INT);
             $command->bindValue(':id_semester', $semesterId, PDO::PARAM_INT);
             $command->bindValue(':id_client', $clientId, PDO::PARAM_INT);
-            $command->bindValue(':date', $post['date'], PDO::PARAM_STR);
+            $command->bindValue(':date', $dateValue, PDO::PARAM_STR);
             $notes === null ? $command->bindValue(':notes', null, PDO::PARAM_NULL) : $command->bindValue(':notes', $notes, PDO::PARAM_STR);
             $command->bindValue(':is_retake', $isRetake, PDO::PARAM_BOOL);
             $command->bindValue(':created_by', $actorId, PDO::PARAM_INT);
@@ -2587,6 +2818,32 @@ public function actionGetListExplorePpds()
                 ];
             }
         }
+
+        // Full tenant action catalog, independent of this user's logbooks/semester.
+        // Keep Stase and Action Test; do not invent action IDs or identifiers.
+        $actionsSql = "
+            SELECT
+                ma.id AS id,
+                ma.id AS id_action,
+                ma.identifier AS identifier,
+                ma.name AS name
+            FROM m_action ma
+            LEFT JOIN m_action_type mat ON ma.id_type = mat.id
+            WHERE mat.id_client = :id_client
+            ORDER BY
+                CASE mat.name
+                    WHEN 'Activity' THEN 1
+                    WHEN 'Academic' THEN 2
+                    WHEN 'Others'   THEN 3
+                    ELSE 4
+                END,
+                ma.name ASC,
+                ma.id ASC
+        ";
+
+        $user['m_actions'] = Yii::app()->dbPrasi->createCommand($actionsSql)
+            ->bindValue(':id_client', $idClient)
+            ->queryAll();
 
         // === HITUNG POIN MORBIDITAS AKTIF ===
         $morbiditasPoints = 0;
@@ -3715,7 +3972,7 @@ public function actionCreateLogbook()
         $idClient = (int)$payload['id_client'];
         $userSchema = $this->createLogbookAssertColumns($db, 'm_user', array('id', 'id_client', 'id_role', 'id_semester', 'id_stase'));
         $deletedWhere = isset($userSchema->columns['deleted_at']) ? ' AND u.deleted_at IS NULL' : '';
-        $actor = $db->createCommand()->select('u.id,u.id_client,u.id_role,u.id_semester,u.id_stase,r.name role_name')
+        $actor = $db->createCommand()->select('u.id,u.display_name,u.id_client,u.id_role,u.id_semester,u.id_stase,r.name role_name')
             ->from('m_user u')->leftJoin('m_role r', 'r.id=u.id_role')
             ->where('u.id=:id AND u.id_client=:client' . $deletedWhere, array(':id' => $id, ':client' => $idClient))->queryRow();
         if (!$actor) {
@@ -3863,16 +4120,172 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
 
     private function createLogbookAttachments($db, $idLogbook, $rows, $idClient)
     {
+        if (!is_array($rows)) throw new CHttpException(422, 'Attachment harus berupa array.');
         foreach ($rows as $row) {
             if (!is_array($row)) throw new CHttpException(422, 'Baris attachment tidak valid.');
-            $path = isset($row['path']) ? $row['path'] : (isset($row['url_file']) ? $row['url_file'] : (isset($row['url']) ? $row['url'] : null));
+            $path = isset($row['url_file']) ? $row['url_file'] : (isset($row['path']) ? $row['path'] : (isset($row['url']) ? $row['url'] : null));
             if (!$this->createLogbookSafeAttachmentPath($path)) throw new CHttpException(422, 'Path attachment harus path relatif server yang aman.');
-            $data = $this->createLogbookAllowedRow($row, array('name','url_file','file_name','file_type','url','path'), array('id_logbook'=>$idLogbook,'id_client'=>$idClient));
-            if (isset($data['path'])) $data['path'] = $this->createLogbookNormalPath($data['path']);
-            foreach (array('url_file','url') as $field) if (isset($data[$field])) $data[$field] = $this->createLogbookNormalPath($data[$field]);
+            // Validate every supplied alias; do not let a safe path mask a device URI.
+            foreach (array('url_file', 'url', 'path') as $field) {
+                if (isset($row[$field]) && !$this->createLogbookSafeAttachmentPath($row[$field])) {
+                    throw new CHttpException(422, 'Path attachment harus path relatif server yang aman.');
+                }
+            }
+            // Persist only the actual Prasi attachment columns. Filename/MIME and
+            // path/url aliases are transport metadata, not database columns.
+            $row['url_file'] = $this->createLogbookNormalPath($path);
+            $data = $this->createLogbookAllowedRow($row, array('name','url_file'), array('id_logbook'=>$idLogbook,'id_client'=>$idClient));
+            foreach (array('url_file','url','path') as $field) {
+                if (isset($data[$field])) $data[$field] = $this->createLogbookNormalPath($data[$field]);
+            }
             $this->createLogbookInsert($db, 't_logbook_attachment', $data);
         }
     }
+
+
+public function actionPrasiUpload()
+{
+    // Generic Yii/PHP multipart adapter; route: index.php?r=apiMobileService/prasiUpload.
+    // Legacy actionLogin returns IDs, NOT a token/session. This verifies active
+    // tenant membership only; it cannot prove the sender owns the supplied ID.
+    $method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET');
+    header('Allow: GET, OPTIONS, POST');
+    header('Access-Control-Expose-Headers: X-Prasi-Upload-Contract');
+    if (!in_array($method, array('GET', 'OPTIONS', 'POST'), true)) {
+        $this->hachiGenericUploadReply(405, 'Method not allowed.');
+        return;
+    }
+    // Browser transport preflight is not a capability grant and performs no reads/writes.
+    if ($method === 'OPTIONS') {
+        header('Access-Control-Allow-Methods: GET, OPTIONS, POST');
+        $this->hachiGenericUploadReply(204, '');
+        return;
+    }
+    $identity = $method === 'POST' ? $_POST : $_GET;
+    foreach (array('id_user', 'id_client') as $field) {
+        if (!isset($identity[$field]) || !is_string($identity[$field]) ||
+            !preg_match('/^[1-9][0-9]*$/D', $identity[$field]) ||
+            strlen($identity[$field]) > 10 || (float)$identity[$field] > 2147483647) {
+            $this->hachiGenericUploadReply(401, 'Valid login id_user and id_client required.');
+            return;
+        }
+    }
+    $actorId = (int)$identity['id_user'];
+    $clientId = (int)$identity['id_client'];
+    try {
+        $db = Yii::app()->dbPrasi;
+        // Reuse Create's proven actor/client/deleted predicate, without role gates.
+        $actor = $this->createLogbookActor($db, array('created_by'=>$actorId, 'id_client'=>$clientId));
+        // createLogbookActor does NOT check status despite its error wording.
+        // The supplied login/audit schema proves m_user.status and deleted_at.
+        $active = $db->createCommand("SELECT id,id_client FROM m_user
+            WHERE id=:id AND id_client=:client AND status='Active' AND deleted_at IS NULL")
+            ->bindValues(array(':id'=>$actorId, ':client'=>$clientId))->queryRow();
+        if (!$active || (int)$actor['id'] !== $actorId || (int)$actor['id_client'] !== $clientId ||
+            (int)$active['id'] !== $actorId || (int)$active['id_client'] !== $clientId) {
+            throw new CHttpException(403, 'Actor/client membership invalid.');
+        }
+    } catch (CHttpException $e) {
+        $this->hachiGenericUploadReply(403, 'User inactive, deleted, or outside selected client.');
+        return;
+    } catch (Throwable $e) {
+        $this->hachiGenericUploadReply(500, 'Unable to verify actor/client membership.');
+        return;
+    }
+    if ($method === 'GET') {
+        // Read-only: no directory creation, upload movement, or database writes.
+        header('X-Prasi-Upload-Contract: prasi-file-v1');
+        $this->hachiGenericUploadReply(200, 'prasi-file-v1');
+        return;
+    }
+    // PHP separates text fields from filename-keyed file parts (native headers OK).
+    if (count($_FILES) !== 1 || count($_POST) !== 2 ||
+        array_diff(array_keys($_POST), array('id_user', 'id_client'))) {
+        $this->hachiGenericUploadReply(400, 'Exactly one file and id_user/id_client text parts required.');
+        return;
+    }
+    $file = reset($_FILES);
+    if (!is_array($file) || !isset($file['error'], $file['tmp_name'], $file['size'], $file['name']) ||
+        !is_string($file['name']) || !is_string($file['tmp_name']) ||
+        $file['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'])) {
+        $this->hachiGenericUploadReply(400, 'Invalid multipart file.');
+        return;
+    }
+    $size = filesize($file['tmp_name']);
+    if ($size === false || $size < 1 || $size > 5 * 1024 * 1024) {
+        $this->hachiGenericUploadReply(413, 'File must be between 1 byte and 5 MiB.');
+        return;
+    }
+    try {
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = $finfo->file($file['tmp_name']);
+    } catch (Throwable $e) {
+        $this->hachiGenericUploadReply(500, 'Server MIME inspection unavailable.');
+        return;
+    }
+    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp', 'application/pdf'=>'pdf');
+    if (!isset($extensions[$mime])) {
+        $this->hachiGenericUploadReply(415, 'Unsupported server-detected MIME type.');
+        return;
+    }
+    if (strpos($mime, 'image/') === 0 && @getimagesize($file['tmp_name']) === false) {
+        $this->hachiGenericUploadReply(415, 'Invalid image bytes.');
+        return;
+    }
+    // Ignore ?to, original filename and declared MIME. Tenant comes from matched rows.
+    $datePath = date('Y-m/d');
+    $root = realpath(Yii::getPathOfAlias('webroot'));
+    if ($root === false) {
+        $this->hachiGenericUploadReply(500, 'Storage root unavailable.');
+        return;
+    }
+    $directory = $root;
+    // Check each component BEFORE descending/creating: reject symlink escapes.
+    foreach (array('_file', date('Y-m'), date('d'), (string)$clientId) as $segment) {
+        $next = $directory . DIRECTORY_SEPARATOR . $segment;
+        if (is_link($next) || (file_exists($next) && !is_dir($next)) ||
+            (!is_dir($next) && !@mkdir($next, 0750) && !is_dir($next))) {
+            $this->hachiGenericUploadReply(500, 'Storage directory unavailable.');
+            return;
+        }
+        $resolved = realpath($next);
+        if ($resolved === false || strpos($resolved . DIRECTORY_SEPARATOR, $root . DIRECTORY_SEPARATOR) !== 0) {
+            $this->hachiGenericUploadReply(500, 'Unsafe storage directory.');
+            return;
+        }
+        $directory = $resolved;
+    }
+    try {
+        $name = bin2hex(random_bytes(24)) . '.' . $extensions[$mime];
+    } catch (Throwable $e) {
+        $this->hachiGenericUploadReply(500, 'Secure random name unavailable.');
+        return;
+    }
+    $target = $directory . DIRECTORY_SEPARATOR . $name;
+    if (file_exists($target) || is_link($target) || !move_uploaded_file($file['tmp_name'], $target)) {
+        $this->hachiGenericUploadReply(500, 'Unable to store file.');
+        return;
+    }
+    if (!chmod($target, 0640)) {
+        unlink($target);
+        $this->hachiGenericUploadReply(500, 'Unable to secure file permissions.');
+        return;
+    }
+    $this->hachiGenericUploadReply(200, '/_file/' . $datePath . '/' . $clientId . '/' . $name);
+}
+
+
+
+protected function hachiGenericUploadReply($statusCode, $body)
+{
+    http_response_code($statusCode);
+    header('Content-Type: text/plain; charset=utf-8');
+    header('Cache-Control: no-store');
+    header('X-Content-Type-Options: nosniff');
+    echo $body;
+    Yii::app()->end();
+}
+
 
     private function createLogbookAsm($db, $idLogbook, $rows, $idClient, $idAction, $action)
     {
@@ -3937,27 +4350,23 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
         $recipientId = (int)$recipientId;
         if ($recipientId < 1 || in_array($recipientId, $notifiedUserIds, true)) return;
         $notifiedUserIds[] = $recipientId;
-        try {
-            $recipient = $db->createCommand('SELECT id, id_role FROM m_user WHERE id=:id AND id_client=:client')
-                ->bindValues(array(':id'=>$recipientId, ':client'=>(int)$idClient))->queryRow();
-            if (!$recipient) return;
-            $actionName = trim((string)(isset($action['name']) ? $action['name'] : (isset($action['action_name']) ? $action['action_name'] : 'Logbook')));
-            $ppdsName = trim((string)(isset($actor['display_name']) ? $actor['display_name'] : 'PPDS'));
-            $message = $ppdsName . ' menambahkan data ' . $actionName . ' pada ' . date('d/m/Y H:i', strtotime($now)) . ', mohon berikan verifikasi Anda.';
-            $db->createCommand()->insert('t_notif', array(
-                'message'=>$message,
-                'date'=>$now,
-                'type'=>'verify',
-                'id_user'=>$recipientId,
-                'url'=>'/staff/action/' . (int)$idAction . '/' . (int)$idLogbook,
-                'id_role'=>$recipient['id_role'],
-                'read'=>new CDbExpression('FALSE'),
-                'id_client'=>(int)$idClient,
-                'id_logbook'=>(int)$idLogbook,
-            ));
-        } catch (Throwable $notificationError) {
-            Yii::log('CreateLogbook staff notification failed: ' . $notificationError->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-        }
+        $recipient = $db->createCommand('SELECT id, id_role FROM m_user WHERE id=:id AND id_client=:client')
+            ->bindValues(array(':id'=>$recipientId, ':client'=>(int)$idClient))->queryRow();
+        if (!$recipient) throw new CHttpException(422, 'Verifier tidak aktif pada client yang dipilih.');
+        $actionName = trim((string)(isset($action['name']) ? $action['name'] : (isset($action['action_name']) ? $action['action_name'] : 'Logbook')));
+        $ppdsName = trim((string)(isset($actor['display_name']) ? $actor['display_name'] : 'PPDS'));
+        $message = $ppdsName . ' menambahkan data ' . $actionName . ' pada ' . date('d/m/Y H:i', strtotime($now)) . ', mohon berikan verifikasi Anda.';
+        $db->createCommand()->insert('t_notif', array(
+            'message'=>$message,
+            'date'=>$now,
+            'type'=>'verify',
+            'id_user'=>$recipientId,
+            'url'=>'/staff/action/' . (int)$idAction . '/' . (int)$idLogbook,
+            'id_role'=>$recipient['id_role'],
+            'read'=>new CDbExpression('FALSE'),
+            'id_client'=>(int)$idClient,
+            'id_logbook'=>(int)$idLogbook,
+        ));
     };
 
     foreach ($rows as $row) {
@@ -3987,6 +4396,7 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
         $notifyPendingStaff((int)$row['id_user']);
     }
 }
+
 
 
     private function createLogbookAssertStaffJejaringStatus($db, $row, $target, $idClient, $idAction)
@@ -4074,7 +4484,19 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
     }
     private function createLogbookText($payload,$field) { if (!array_key_exists($field,$payload) || $payload[$field]===null || $payload[$field]==='') return null; if (!is_scalar($payload[$field])) throw new CHttpException(422,$field.' harus teks.'); return trim((string)$payload[$field]); }
     private function createLogbookBool($payload,$field,$default) { if (!array_key_exists($field,$payload)) return $default; if (is_bool($payload[$field])) return $payload[$field]; if (in_array((string)$payload[$field],array('0','1'),true)) return $payload[$field]==='1'; throw new CHttpException(422,$field.' harus boolean.'); }
-    private function createLogbookSafeAttachmentPath($path) { return is_string($path) && $path!=='' && preg_match('#^(?![\\\\/]|[A-Za-z]:)(?!.*(?:^|[\\\\/])\.\.(?:[\\\\/]|$))[A-Za-z0-9][A-Za-z0-9._/\\\\-]*$#',$path)===1; }
+        private function createLogbookSafeAttachmentPath($path)
+    {
+        // Prasi stores _file/... (leading underscore); old guard rejected it.
+        // Still accept safe legacy relative storage paths, never URLs/device URIs.
+        if (!is_string($path) || $path === '') return false;
+        if (preg_match('#^[A-Za-z0-9_][A-Za-z0-9._/\\\\-]*$#', $path) !== 1) return false;
+        $normalized = str_replace('\\', '/', $path);
+        foreach (explode('/', $normalized) as $segment) {
+            if ($segment === '' || $segment === '.' || $segment === '..') return false;
+        }
+        return true;
+    }
+
     private function createLogbookNormalPath($path) { return str_replace('\\\\','/',(string)$path); }
     private function createLogbookValidateScalarFields($payload) { foreach (array('notes','title','location','operation_code','exam_result') as $field) if (isset($payload[$field]) && !is_scalar($payload[$field])) throw new CHttpException(422,$field.' harus teks.'); }
     private function createLogbookAssertColumns($db,$table,$columns) { $schema=$db->schema->getTable($table); if (!$schema) throw new CHttpException(500,'Tabel '.$table.' tidak ditemukan.'); foreach ($columns as $column) if (!isset($schema->columns[$column])) throw new CHttpException(500,'Kolom '.$table.'.'.$column.' tidak ditemukan.'); return $schema; }
@@ -4106,28 +4528,35 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
             $data = $this->updateLogbookScalarFields($db, $payload, $action, (int)$actor['id_client']);
             if (!$data) throw new CHttpException(422, 'Tidak ada perubahan yang diizinkan.');
             $now = date('Y-m-d H:i:s');
+
+            /* Preflight the complete desired set before changing any row. Retained
+             * rows are {id}; freshly uploaded rows are {name,url_file}; omitted
+             * active rows are soft-deleted only after all validation succeeds. */
+            $applyAttachments = null;
+            if (array_key_exists('t_logbook_attachment', $payload)) {
+                $applyAttachments = $this->updateLogbookSyncAttachments(
+                    $db, $payload['t_logbook_attachment'], $action,
+                    (int)$parent['id'], (int)$actor['id_client'], $now, true
+                );
+            }
+
             $schema = $this->updateLogbookSchema($db, 't_logbook');
             if (isset($schema['updated_date'])) $data['updated_date'] = $now;
             $this->updateLogbookBoundUpdate($db, 't_logbook', $data,
                 'id=:id AND id_client=:id_client AND id_user=:actor_id',
                 array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
             if (array_key_exists('t_logbook_emr', $payload)) {
-                $this->updateLogbookUpsertEmrByLogbook($db, $payload['t_logbook_emr'], $action, (int)$parent['id'], (int)$actor['id_client'], $now);
+                $this->updateLogbookUpsertEmrByLogbook($db, $payload['t_logbook_emr'], $action,
+                    (int)$parent['id'], (int)$actor['id_client'], $now);
             }
-            // Child rows stay unchanged unless the client supplies server-issued IDs.
-            // IDs are locked and scoped below; no client field can create or re-parent a child.
-            if (array_key_exists('t_logbook_attachment', $payload)) {
-                $this->updateLogbookServerIssuedChildren($db, 't_logbook_attachment', $payload['t_logbook_attachment'],
-                    array('name','url_file','file_name','file_type','url','path'), (int)$parent['id'], (int)$actor['id_client'], $now);
-            }
+            // Omitted field preserves attachments; explicit [] soft-deletes every active row.
+            if ($applyAttachments !== null) $applyAttachments();
             if (array_key_exists('t_logbook_status', $payload)) {
                 $this->updateLogbookUpdateVerifierAssignments($db, $payload['t_logbook_status'], $action,
                     (int)$parent['id'], (int)$actor['id_client'], $now);
             }
 
-            /* A PPDS re-save after any rejection/revision is a revision request.
-             * Detect child state too: the parent can be `pending` when another
-             * verifier is still pending alongside a rejected Staff Jejaring row. */
+            /* Preserve the PPDS revision lifecycle and its notification event. */
             $previousParentStatus = strtolower(trim((string)($parent['verified_status'] ?? 'pending')));
             $hasReviewState = in_array($previousParentStatus, array('rejected', 'revised', 'revision'), true)
                 || (bool)$db->createCommand("SELECT 1 FROM t_logbook_status WHERE id_logbook=:id_logbook AND LOWER(COALESCE(status, 'pending')) IN ('rejected','revised','revision') LIMIT 1")
@@ -4155,6 +4584,8 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
                         'id = :id AND id_client = :id_client AND id_user = :actor_id',
                         array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
                 }
+                $this->updateLogbookNotifyRevisedVerifiers($db, $parent, $action, $actor,
+                    (int)$actor['id_client'], $now);
             }
             $saved = $db->createCommand()->select('*')->from('t_logbook')
                 ->where('id=:id AND id_client=:id_client', array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client']))->queryRow();
@@ -4166,13 +4597,187 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
         } catch (Throwable $e) {
             if ($transaction !== null && $transaction->active) $transaction->rollback();
             Yii::log('UpdateLogbook failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-            /* TEMPORARY: remove data.detail after the Morbiditas failure is identified. */
-            return $this->updateLogbookJson(false, 'Gagal memperbarui logbook.', 500, array(
-                'detail' => $e->getMessage(),
-                'error_type' => get_class($e),
-            ));
+            return $this->updateLogbookJson(false, 'Gagal memperbarui logbook.', 500);
         }
     }
+
+    
+    private function updateLogbookNotifyRevisedVerifiers($db, $parent, $action, $actor, $idClient, $now)
+{
+    $statusSchema = $this->updateLogbookSchema($db, 't_logbook_status', false);
+    $notifSchema = $this->updateLogbookSchema($db, 't_notif', false);
+    foreach (array('id_logbook', 'id_user', 'status') as $column) {
+        if (!$statusSchema || !isset($statusSchema[$column])) {
+            throw new RuntimeException('Schema status verifier tidak tersedia untuk notifikasi revisi.');
+        }
+    }
+    foreach (array('message', 'date', 'type', 'id_user', 'id_role', 'read', 'id_client', 'id_logbook') as $column) {
+        if (!$notifSchema || !isset($notifSchema[$column])) {
+            throw new RuntimeException('Schema notifikasi tidak tersedia untuk revisi logbook.');
+        }
+    }
+
+    $where = "tls.id_logbook=:id_logbook AND LOWER(COALESCE(tls.status, 'pending')) IN ('pending','revised','rejected')";
+    $params = array(':id_logbook'=>(int)$parent['id']);
+    if (isset($statusSchema['id_client'])) {
+        $where .= ' AND tls.id_client=:id_client';
+        $params[':id_client'] = (int)$idClient;
+    }
+    if (isset($statusSchema['deleted_at'])) $where .= ' AND tls.deleted_at IS NULL';
+
+    $userSchema = $this->updateLogbookSchema($db, 'm_user', false);
+    $userWhere = 'u.id_client=:recipient_client';
+    $params[':recipient_client'] = (int)$idClient;
+    if (isset($userSchema['deleted_at'])) $userWhere .= ' AND u.deleted_at IS NULL';
+    if (isset($userSchema['status'])) $userWhere .= " AND LOWER(u.status)='active'";
+
+    /* DISTINCT makes duplicate role/status rows for one Staff or Staff Jejaring
+     * produce exactly one notification in this edit event.  No historical
+     * notification lookup occurs: a later PPDS edit is intentionally a new event. */
+    $recipients = $db->createCommand(
+        'SELECT DISTINCT tls.id_user, u.id_role FROM t_logbook_status tls '
+        . 'INNER JOIN m_user u ON u.id=tls.id_user AND ' . $userWhere . ' '
+        . 'WHERE ' . $where
+    )->bindValues($params)->queryAll();
+
+    if (!$recipients) return;
+    $author = $db->createCommand('SELECT display_name FROM m_user WHERE id=:id AND id_client=:id_client')
+        ->bindValues(array(':id'=>(int)$actor['id'], ':id_client'=>(int)$idClient))->queryRow();
+    $actorName = trim((string)(isset($author['display_name']) ? $author['display_name'] : 'PPDS'));
+    $actionName = trim((string)(isset($action['name']) ? $action['name'] : 'Logbook'));
+    $message = $actorName . ' merevisi logbook ' . $actionName . ' pada ' . date('d/m/Y H:i', strtotime($now)) . ', mohon tinjau kembali.';
+
+    foreach ($recipients as $recipient) {
+        $db->createCommand()->insert('t_notif', array(
+            'message'=>$message,
+            'date'=>$now,
+            'type'=>'verify',
+            'id_user'=>(int)$recipient['id_user'],
+            'url'=>'/staff/action/' . (int)$parent['id_action'] . '/' . (int)$parent['id'],
+            'id_role'=>$recipient['id_role'],
+            'read'=>new CDbExpression('FALSE'),
+            'id_client'=>(int)$idClient,
+            'id_logbook'=>(int)$parent['id'],
+        ));
+    }
+}
+    
+    
+    private function updateLogbookSyncAttachments($db, $rows, $action, $idLogbook, $idClient, $now, $validateOnly = false)
+    {
+        if (!$this->updateLogbookFlag($action, 'has_attachment')) {
+            throw new CHttpException(422, 'Attachment tidak diizinkan.');
+        }
+        if (!is_array($rows) || count($rows) > 100) {
+            throw new CHttpException(422, 'Attachment harus berupa array, maksimal 100 gambar.');
+        }
+        $schema = $this->updateLogbookSchema($db, 't_logbook_attachment', false);
+        foreach (array('id', 'id_logbook', 'name', 'url_file') as $column) {
+            if (!isset($schema[$column])) throw new CHttpException(422, 'Schema attachment tidak didukung.');
+        }
+        if (!isset($schema['deleted_at'])) {
+            throw new CHttpException(422, 'Schema attachment belum mendukung soft-delete.');
+        }
+
+        $where = 'id_logbook=:logbook AND deleted_at IS NULL';
+        $params = array(':logbook'=>$idLogbook);
+        if (isset($schema['id_client'])) {
+            $where .= ' AND id_client=:client';
+            $params[':client'] = $idClient;
+        }
+        $existing = $db->createCommand('SELECT id,name,url_file FROM t_logbook_attachment WHERE ' . $where . ' FOR UPDATE')
+            ->bindValues($params)->queryAll();
+        $owned = array();
+        foreach ($existing as $item) $owned[(string)$item['id']] = $item;
+
+        $labels = isset($action['attachment_name']) ? $action['attachment_name'] : array();
+        if (is_string($labels)) {
+            $decoded = json_decode($labels, true);
+            $labels = is_array($decoded) ? $decoded : array($labels);
+        }
+        if (!is_array($labels)) $labels = array();
+        $labels = array_values(array_filter(array_map(function ($label) {
+            return is_scalar($label) ? trim((string)$label) : '';
+        }, $labels)));
+
+        $keep = array();
+        $new = array();
+        $paths = array();
+        $root = realpath(Yii::getPathOfAlias('webroot'));
+        foreach ($rows as $row) {
+            if (!is_array($row)) throw new CHttpException(422, 'Baris attachment tidak valid.');
+            if (array_key_exists('id', $row)) {
+                // Existing rows are retained by their server-issued primary key only.
+                if (count($row) !== 1 || !$this->updateLogbookPositiveId($row['id'])
+                    || !isset($owned[(string)$row['id']]) || isset($keep[(string)$row['id']])) {
+                    throw new CHttpException(422, 'Attachment bukan milik logbook ini atau ID duplikat.');
+                }
+                $keep[(string)$row['id']] = true;
+                continue;
+            }
+            // New references are exactly the two fields emitted by the mobile desired-set payload.
+            if (array_diff(array_keys($row), array('name', 'url_file'))
+                || !isset($row['name'], $row['url_file']) || !is_string($row['name'])
+                || trim($row['name']) === '' || strlen($row['name']) > 200 || !is_string($row['url_file'])) {
+                throw new CHttpException(422, 'Referensi attachment baru tidak valid.');
+            }
+            $name = trim($row['name']);
+            if ($labels && !in_array($name, $labels, true)) {
+                throw new CHttpException(422, 'Label attachment tidak sesuai action.');
+            }
+            $path = str_replace('\\', '/', $row['url_file']);
+            // Accept current generic upload output: _file/YYYY-M/D/[optional client/]<safe filename>.
+            // The file must exist under this deployment's webroot and pass MIME/image verification.
+            if (!preg_match('#^_file/[0-9]{4}-[0-9]{1,2}/[0-9]{1,2}/[A-Za-z0-9._/-]+$#D', $path)
+                || strpos($path, '//') !== false || isset($paths[$path])) {
+                throw new CHttpException(422, 'Path upload baru tidak valid.');
+            }
+            $segments = explode('/', $path);
+            foreach ($segments as $segment) {
+                if ($segment === '' || $segment === '.' || $segment === '..') {
+                    throw new CHttpException(422, 'Path upload baru tidak valid.');
+                }
+            }
+            $file = $root === false ? false : realpath($root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $path));
+            if ($file === false || strpos($file, $root . DIRECTORY_SEPARATOR) !== 0 || !is_file($file) || !is_readable($file)) {
+                throw new CHttpException(422, 'File hasil upload tidak ditemukan.');
+            }
+            $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file);
+            $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp');
+            if (!isset($extensions[$mime]) || strtolower(pathinfo($file, PATHINFO_EXTENSION)) !== $extensions[$mime]
+                || @getimagesize($file) === false || filesize($file) < 1 || filesize($file) > 5 * 1024 * 1024) {
+                throw new CHttpException(422, 'File upload bukan gambar valid.');
+            }
+            $paths[$path] = true;
+            $data = array('id_logbook'=>$idLogbook, 'name'=>$name, 'url_file'=>$path);
+            if (isset($schema['id_client'])) $data['id_client'] = $idClient;
+            if (isset($schema['created_date'])) $data['created_date'] = $now;
+            if (isset($schema['updated_date'])) $data['updated_date'] = $now;
+            if (isset($schema['deleted_at'])) $data['deleted_at'] = null;
+            $new[] = $data;
+        }
+
+        $apply = function () use ($db, $existing, $keep, $new, $now, $idLogbook, $idClient, $schema) {
+            foreach ($existing as $item) {
+                if (isset($keep[(string)$item['id']])) continue;
+                $data = array('deleted_at'=>$now);
+                if (isset($schema['updated_date'])) $data['updated_date'] = $now;
+                $where = 'id=:id AND id_logbook=:logbook AND deleted_at IS NULL';
+                $params = array(':id'=>(int)$item['id'], ':logbook'=>$idLogbook);
+                if (isset($schema['id_client'])) {
+                    $where .= ' AND id_client=:client';
+                    $params[':client'] = $idClient;
+                }
+                $this->updateLogbookBoundUpdate($db, 't_logbook_attachment', $data, $where, $params);
+            }
+            foreach ($new as $data) $db->createCommand()->insert('t_logbook_attachment', $data);
+        };
+        if ($validateOnly) return $apply;
+        $apply();
+    }
+
+
+
 
  private function updateLogbookActor($db, $payload)
 {
@@ -4576,7 +5181,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
             $statusColumns['notes'] = true;
             $transaction = $db->beginTransaction();
 
-            $parentWhere = 'lb.id = :id_logbook AND ma.id_client = :id_client';
+            $parentWhere = 'lb.id = :id_logbook AND lb.id_client = :id_client AND ma.id_client = :id_client';
             if (isset($logbookColumns['deleted_at'])) {
                 $parentWhere .= ' AND lb.deleted_at IS NULL';
             }
@@ -4792,9 +5397,11 @@ private function updateLogbookEmrNullableInteger($value, $field)
             }
 
             $allWhere = 'id_logbook = :id_logbook';
+            $allParams = array(':id_logbook' => (string)$post['id_logbook']);
+            if (isset($statusColumns['id_client'])) { $allWhere .= ' AND id_client = :id_client'; $allParams[':id_client'] = (string)$post['id_client']; }
             $allRows = $db->createCommand(
                 'SELECT status FROM t_logbook_status WHERE ' . $allWhere . ' FOR UPDATE'
-            )->bindValue(':id_logbook', (string) $post['id_logbook'])->queryAll();
+            )->bindValues($allParams)->queryAll();
             if (!$allRows) {
                 throw new RuntimeException('Tidak ada status verifier untuk logbook');
             }
@@ -4817,11 +5424,12 @@ private function updateLogbookEmrNullableInteger($value, $field)
             }
 
             $db->createCommand(
-                'UPDATE t_logbook SET verified = :verified, verified_status = :verified_status WHERE id = :id_logbook'
+                'UPDATE t_logbook SET verified = :verified, verified_status = :verified_status WHERE id = :id_logbook AND id_client = :id_client'
             )->execute(array(
                 ':verified' => $parentVerified ? 'true' : 'false',
                 ':verified_status' => $parentStatus,
                 ':id_logbook' => (string) $post['id_logbook'],
+                ':id_client' => (string) $post['id_client'],
             ));
 
             if ($statusChanged && in_array($status, array('verified', 'rejected', 'revised'), true)) {
@@ -4836,7 +5444,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
             }
             $returnedStatuses = $db->createCommand(
                 'SELECT ' . implode(', ', $returnColumns) . ' FROM t_logbook_status WHERE ' . $allWhere . ' ORDER BY id'
-            )->bindValue(':id_logbook', (string) $post['id_logbook'])->queryAll();
+            )->bindValues($allParams)->queryAll();
 
             $transaction->commit();
             return $this->logbookStatusJson(true, 'Status logbook berhasil diupdate', array(
@@ -4935,6 +5543,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
             'url'=>'/ppds/action/' . $parent['id_action'] . '/' . $parent['id'],
         ));
     }
+
 
     private function logbookStatusTextColumn($db, $columnName)
     {
