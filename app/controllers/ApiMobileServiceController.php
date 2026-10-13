@@ -4507,99 +4507,199 @@ protected function hachiGenericUploadReply($statusCode, $body)
     // update logbookkkkkkkkkkkk
     /* REPLACE the entire existing actionSaveLogbookUpdate() method; do not append. */
     public function actionSaveLogbookUpdate()
-    {
-        header('Content-Type: application/json; charset=utf-8');
-        $payload = json_decode(file_get_contents('php://input'), true);
-        if (!is_array($payload)) return $this->updateLogbookJson(false, 'Payload JSON tidak valid.', 400);
-        foreach (array('id', 'created_by', 'id_client') as $field) {
-            if (!$this->updateLogbookPositiveId(isset($payload[$field]) ? $payload[$field] : null)) {
-                return $this->updateLogbookJson(false, 'Permintaan tidak valid.', 422);
-            }
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $payload = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($payload)) return $this->updateLogbookJson(false, 'Payload JSON tidak valid.', 400);
+    foreach (array('id', 'created_by', 'id_client') as $field) {
+        if (!$this->updateLogbookPositiveId(isset($payload[$field]) ? $payload[$field] : null)) {
+            return $this->updateLogbookJson(false, 'Permintaan tidak valid.', 422);
         }
-        $db = Yii::app()->dbPrasi;
-        $transaction = null;
-        try {
-            $transaction = $db->beginTransaction();
-            $actor = $this->updateLogbookActor($db, $payload);
-            $parent = $this->updateLogbookLockedParent($db, (int)$payload['id'], (int)$actor['id_client'], (int)$actor['id']);
-            $action = $db->createCommand('SELECT * FROM m_action WHERE id=:id AND id_client=:id_client')
-                ->bindValues(array(':id'=>(int)$parent['id_action'], ':id_client'=>(int)$actor['id_client']))->queryRow();
-            if (!$action) throw new CHttpException(404, 'Logbook tidak ditemukan.');
-            $data = $this->updateLogbookScalarFields($db, $payload, $action, (int)$actor['id_client']);
-            if (!$data) throw new CHttpException(422, 'Tidak ada perubahan yang diizinkan.');
-            $now = date('Y-m-d H:i:s');
+    }
 
-            /* Preflight the complete desired set before changing any row. Retained
-             * rows are {id}; freshly uploaded rows are {name,url_file}; omitted
-             * active rows are soft-deleted only after all validation succeeds. */
+    $db = Yii::app()->dbPrasi;
+    $transaction = null;
+    try {
+        $transaction = $db->beginTransaction();
+        $actorId = (int)$payload['created_by'];
+        $idClient = (int)$payload['id_client'];
+
+        /* Resolve Staff independently of the PPDS owner helper.  The list endpoint
+         * scopes Exam rows to t_logbook.created_by, so this branch deliberately
+         * applies that same creator scope (rather than verifier or PPDS ownership). */
+        $actorUser = $db->createCommand(
+            'SELECT u.id, u.id_client, u.is_show, u.status, r.name AS role_name '
+            . 'FROM m_user u INNER JOIN m_role r ON r.id=u.id_role '
+            . 'WHERE u.id=:id AND u.id_client=:id_client'
+        )->bindValues(array(':id'=>$actorId, ':id_client'=>$idClient))->queryRow();
+        $roleName = strtolower(trim((string)($actorUser['role_name'] ?? '')));
+        $isStaffExamActor = in_array($roleName, array('staff', 'staff jejaring'), true);
+
+        if ($isStaffExamActor) {
+            $isShown = in_array($actorUser['is_show'] ?? null, array(true, 1, '1', 'true', 't'), true);
+            $isActive = strtolower(trim((string)($actorUser['status'] ?? ''))) === 'active';
+            if (!$isShown || !$isActive) throw new CHttpException(403, 'Staff tidak aktif.');
+
+            /* Staff never changes verifier assignments or lifecycle. created_by remains
+             * the authenticated compatibility actor; Staff may reassign an Exam only
+             * to an active PPDS from the same tenant. */
+            foreach (array('verified', 'verified_status', 'status', 't_logbook_status') as $forbidden) {
+                if (array_key_exists($forbidden, $payload)) {
+                    throw new CHttpException(403, 'Staff tidak dapat mengubah kepemilikan atau status verifikasi.');
+                }
+            }
+
+            $schema = $this->updateLogbookSchema($db, 't_logbook');
+            foreach (array('id', 'id_client', 'id_action', 'created_by') as $column) {
+                if (!isset($schema[$column])) throw new RuntimeException('Required logbook schema is unavailable.');
+            }
+            $parentWhere = 'id=:id AND id_client=:id_client';
+            if (isset($schema['deleted_at'])) $parentWhere .= ' AND deleted_at IS NULL';
+            $parent = $db->createCommand('SELECT * FROM t_logbook WHERE ' . $parentWhere . ' FOR UPDATE')
+                ->bindValues(array(':id'=>(int)$payload['id'], ':id_client'=>$idClient))->queryRow();
+            if (!$parent) throw new CHttpException(404, 'Logbook tidak ditemukan.');
+            if ((int)$parent['created_by'] !== $actorId) {
+                throw new CHttpException(403, 'Logbook Exam bukan dibuat oleh Staff ini.');
+            }
+            if (array_key_exists('id_action', $payload) && (int)$payload['id_action'] !== (int)$parent['id_action']) {
+                throw new CHttpException(422, 'Action logbook tidak sesuai.');
+            }
+
+            $action = $db->createCommand('SELECT * FROM m_action WHERE id=:id AND id_client=:id_client')
+                ->bindValues(array(':id'=>(int)$parent['id_action'], ':id_client'=>$idClient))->queryRow();
+            if (!$action) throw new CHttpException(404, 'Logbook tidak ditemukan.');
+            if (!$this->updateLogbookFlag($action, 'is_exam')) {
+                throw new CHttpException(403, 'Staff hanya dapat mengubah logbook Exam.');
+            }
+
+            $data = $this->updateLogbookScalarFields($db, $payload, $action, $idClient);
+            if (array_key_exists('id_user', $payload)) {
+                if (!$this->updateLogbookPositiveId($payload['id_user'])) {
+                    throw new CHttpException(422, 'Peserta PPDS tidak valid.');
+                }
+                $participant = $db->createCommand(
+                    'SELECT u.id, u.is_show, u.status, r.name AS role_name FROM m_user u '
+                    . 'INNER JOIN m_role r ON r.id=u.id_role '
+                    . 'WHERE u.id=:id AND u.id_client=:id_client'
+                )->bindValues(array(':id'=>(int)$payload['id_user'], ':id_client'=>$idClient))->queryRow();
+                $participantRole = strtolower(trim((string)($participant['role_name'] ?? '')));
+                $participantActive = $participant
+                    && in_array($participant['is_show'] ?? null, array(true, 1, '1', 'true', 't'), true)
+                    && strtolower(trim((string)($participant['status'] ?? ''))) === 'active';
+                if (!$participantActive || $participantRole !== 'ppds') {
+                    throw new CHttpException(422, 'Peserta harus PPDS aktif pada client yang sama.');
+                }
+                $data['id_user'] = (int)$participant['id'];
+            }
+            $now = date('Y-m-d H:i:s');
             $applyAttachments = null;
             if (array_key_exists('t_logbook_attachment', $payload)) {
                 $applyAttachments = $this->updateLogbookSyncAttachments(
                     $db, $payload['t_logbook_attachment'], $action,
-                    (int)$parent['id'], (int)$actor['id_client'], $now, true
+                    (int)$parent['id'], $idClient, $now, true
                 );
             }
-
-            $schema = $this->updateLogbookSchema($db, 't_logbook');
-            if (isset($schema['updated_date'])) $data['updated_date'] = $now;
-            $this->updateLogbookBoundUpdate($db, 't_logbook', $data,
-                'id=:id AND id_client=:id_client AND id_user=:actor_id',
-                array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
-            if (array_key_exists('t_logbook_emr', $payload)) {
+            $hasEmr = array_key_exists('t_logbook_emr', $payload);
+            if (!$data && $applyAttachments === null && !$hasEmr) {
+                throw new CHttpException(422, 'Tidak ada perubahan yang diizinkan.');
+            }
+            if ($data) {
+                if (isset($schema['updated_date'])) $data['updated_date'] = $now;
+                /* Authorization above is complete; do not add id_user to this Staff update. */
+                $this->updateLogbookBoundUpdate($db, 't_logbook', $data,
+                    'id=:id AND id_client=:id_client',
+                    array(':id'=>(int)$parent['id'], ':id_client'=>$idClient));
+            }
+            if ($hasEmr) {
                 $this->updateLogbookUpsertEmrByLogbook($db, $payload['t_logbook_emr'], $action,
-                    (int)$parent['id'], (int)$actor['id_client'], $now);
+                    (int)$parent['id'], $idClient, $now);
             }
-            // Omitted field preserves attachments; explicit [] soft-deletes every active row.
             if ($applyAttachments !== null) $applyAttachments();
-            if (array_key_exists('t_logbook_status', $payload)) {
-                $this->updateLogbookUpdateVerifierAssignments($db, $payload['t_logbook_status'], $action,
-                    (int)$parent['id'], (int)$actor['id_client'], $now);
-            }
 
-            /* Preserve the PPDS revision lifecycle and its notification event. */
-            $previousParentStatus = strtolower(trim((string)($parent['verified_status'] ?? 'pending')));
-            $hasReviewState = in_array($previousParentStatus, array('rejected', 'revised', 'revision'), true)
-                || (bool)$db->createCommand("SELECT 1 FROM t_logbook_status WHERE id_logbook=:id_logbook AND LOWER(COALESCE(status, 'pending')) IN ('rejected','revised','revision') LIMIT 1")
-                    ->bindValue(':id_logbook', (int)$parent['id'])->queryScalar();
-            if ($hasReviewState) {
-                $statusSchema = $this->updateLogbookSchema($db, 't_logbook_status', false);
-                if ($statusSchema && isset($statusSchema['status'])) {
-                    $statusWhere = 'id_logbook = :id_logbook AND LOWER(COALESCE(status, \'pending\')) <> \'verified\'';
-                    $statusParams = array(':id_logbook' => (int)$parent['id']);
-                    if (isset($statusSchema['id_client'])) {
-                        $statusWhere .= ' AND id_client = :id_client';
-                        $statusParams[':id_client'] = (int)$actor['id_client'];
-                    }
-                    if (isset($statusSchema['deleted_at'])) $statusWhere .= ' AND deleted_at IS NULL';
-                    $statusData = array('status' => 'revised');
-                    if (isset($statusSchema['date_time'])) $statusData['date_time'] = $now;
-                    $this->updateLogbookBoundUpdate($db, 't_logbook_status', $statusData, $statusWhere, $statusParams);
-                }
-                $revisedParent = array();
-                if (isset($schema['verified'])) $revisedParent['verified'] = false;
-                if (isset($schema['verified_status'])) $revisedParent['verified_status'] = 'revised';
-                if (isset($schema['updated_date'])) $revisedParent['updated_date'] = $now;
-                if ($revisedParent) {
-                    $this->updateLogbookBoundUpdate($db, 't_logbook', $revisedParent,
-                        'id = :id AND id_client = :id_client AND id_user = :actor_id',
-                        array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
-                }
-                $this->updateLogbookNotifyRevisedVerifiers($db, $parent, $action, $actor,
-                    (int)$actor['id_client'], $now);
-            }
+            /* Intentionally no verifier/lifecycle writes and no revision notification for Staff Exam edits. */
             $saved = $db->createCommand()->select('*')->from('t_logbook')
-                ->where('id=:id AND id_client=:id_client', array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client']))->queryRow();
+                ->where('id=:id AND id_client=:id_client', array(':id'=>(int)$parent['id'], ':id_client'=>$idClient))->queryRow();
             $transaction->commit();
             return $this->updateLogbookJson(true, 'Logbook berhasil diperbarui.', 200, $saved);
-        } catch (CHttpException $e) {
-            if ($transaction !== null && $transaction->active) $transaction->rollback();
-            return $this->updateLogbookJson(false, $e->getMessage(), $e->statusCode);
-        } catch (Throwable $e) {
-            if ($transaction !== null && $transaction->active) $transaction->rollback();
-            Yii::log('UpdateLogbook failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-            return $this->updateLogbookJson(false, 'Gagal memperbarui logbook.', 500);
         }
+
+        /* Existing PPDS path: owner and pending/revised/rejected gating remain in
+         * updateLogbookActor/updateLogbookLockedParent without Staff exceptions. */
+        $actor = $this->updateLogbookActor($db, $payload);
+        $parent = $this->updateLogbookLockedParent($db, (int)$payload['id'], (int)$actor['id_client'], (int)$actor['id']);
+        $action = $db->createCommand('SELECT * FROM m_action WHERE id=:id AND id_client=:id_client')
+            ->bindValues(array(':id'=>(int)$parent['id_action'], ':id_client'=>(int)$actor['id_client']))->queryRow();
+        if (!$action) throw new CHttpException(404, 'Logbook tidak ditemukan.');
+        $data = $this->updateLogbookScalarFields($db, $payload, $action, (int)$actor['id_client']);
+        if (!$data) throw new CHttpException(422, 'Tidak ada perubahan yang diizinkan.');
+        $now = date('Y-m-d H:i:s');
+
+        $applyAttachments = null;
+        if (array_key_exists('t_logbook_attachment', $payload)) {
+            $applyAttachments = $this->updateLogbookSyncAttachments(
+                $db, $payload['t_logbook_attachment'], $action,
+                (int)$parent['id'], (int)$actor['id_client'], $now, true
+            );
+        }
+
+        $schema = $this->updateLogbookSchema($db, 't_logbook');
+        if (isset($schema['updated_date'])) $data['updated_date'] = $now;
+        $this->updateLogbookBoundUpdate($db, 't_logbook', $data,
+            'id=:id AND id_client=:id_client AND id_user=:actor_id',
+            array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
+        if (array_key_exists('t_logbook_emr', $payload)) {
+            $this->updateLogbookUpsertEmrByLogbook($db, $payload['t_logbook_emr'], $action,
+                (int)$parent['id'], (int)$actor['id_client'], $now);
+        }
+        if ($applyAttachments !== null) $applyAttachments();
+        if (array_key_exists('t_logbook_status', $payload)) {
+            $this->updateLogbookUpdateVerifierAssignments($db, $payload['t_logbook_status'], $action,
+                (int)$parent['id'], (int)$actor['id_client'], $now);
+        }
+
+        $previousParentStatus = strtolower(trim((string)($parent['verified_status'] ?? 'pending')));
+        $hasReviewState = in_array($previousParentStatus, array('rejected', 'revised', 'revision'), true)
+            || (bool)$db->createCommand("SELECT 1 FROM t_logbook_status WHERE id_logbook=:id_logbook AND LOWER(COALESCE(status, 'pending')) IN ('rejected','revised','revision') LIMIT 1")
+                ->bindValue(':id_logbook', (int)$parent['id'])->queryScalar();
+        if ($hasReviewState) {
+            $statusSchema = $this->updateLogbookSchema($db, 't_logbook_status', false);
+            if ($statusSchema && isset($statusSchema['status'])) {
+                $statusWhere = 'id_logbook = :id_logbook AND LOWER(COALESCE(status, \'pending\')) <> \'verified\'';
+                $statusParams = array(':id_logbook' => (int)$parent['id']);
+                if (isset($statusSchema['id_client'])) {
+                    $statusWhere .= ' AND id_client = :id_client';
+                    $statusParams[':id_client'] = (int)$actor['id_client'];
+                }
+                if (isset($statusSchema['deleted_at'])) $statusWhere .= ' AND deleted_at IS NULL';
+                $statusData = array('status' => 'revised');
+                if (isset($statusSchema['date_time'])) $statusData['date_time'] = $now;
+                $this->updateLogbookBoundUpdate($db, 't_logbook_status', $statusData, $statusWhere, $statusParams);
+            }
+            $revisedParent = array();
+            if (isset($schema['verified'])) $revisedParent['verified'] = false;
+            if (isset($schema['verified_status'])) $revisedParent['verified_status'] = 'revised';
+            if (isset($schema['updated_date'])) $revisedParent['updated_date'] = $now;
+            if ($revisedParent) {
+                $this->updateLogbookBoundUpdate($db, 't_logbook', $revisedParent,
+                    'id = :id AND id_client = :id_client AND id_user = :actor_id',
+                    array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
+            }
+            $this->updateLogbookNotifyRevisedVerifiers($db, $parent, $action, $actor,
+                (int)$actor['id_client'], $now);
+        }
+        $saved = $db->createCommand()->select('*')->from('t_logbook')
+            ->where('id=:id AND id_client=:id_client', array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client']))->queryRow();
+        $transaction->commit();
+        return $this->updateLogbookJson(true, 'Logbook berhasil diperbarui.', 200, $saved);
+    } catch (CHttpException $e) {
+        if ($transaction !== null && $transaction->active) $transaction->rollback();
+        return $this->updateLogbookJson(false, $e->getMessage(), $e->statusCode);
+    } catch (Throwable $e) {
+        if ($transaction !== null && $transaction->active) $transaction->rollback();
+        Yii::log('UpdateLogbook failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
+        return $this->updateLogbookJson(false, 'Gagal memperbarui logbook.', 500);
     }
+}
 
     
     private function updateLogbookNotifyRevisedVerifiers($db, $parent, $action, $actor, $idClient, $now)
@@ -5052,39 +5152,124 @@ private function updateLogbookEmrNullableInteger($value, $field)
     
     // delete logbokkkkkkkkkkkkkkkkkkkkkk
     public function actionArchiveLogbook()
-    {
-        header('Content-Type: application/json; charset=utf-8');
-        $payload = json_decode(file_get_contents('php://input'), true);
-        if (!is_array($payload)) return $this->deleteLogbookJson(false, 'Payload JSON tidak valid.', 400);
-        foreach (array('id', 'created_by', 'id_client') as $field) {
-            if (!$this->deleteLogbookPositiveId(isset($payload[$field]) ? $payload[$field] : null)) return $this->deleteLogbookJson(false, 'Permintaan tidak valid.', 422);
-        }
-        $db = Yii::app()->dbPrasi;
-        $transaction = null;
-        try {
-            $transaction = $db->beginTransaction();
-            $actor = $this->deleteLogbookActor($db, $payload);
-            $parent = $this->deleteLogbookLockedParent($db, (int)$payload['id'], (int)$actor['id_client'], (int)$actor['id']);
-            $now = date('Y-m-d H:i:s');
-            $this->deleteLogbookSoftDeleteChildren($db, (int)$parent['id'], (int)$actor['id_client'], $now);
-            $parentSchema = $this->deleteLogbookSchema($db, 't_logbook');
-            if (!isset($parentSchema['deleted_at'])) throw new RuntimeException('Soft-delete schema is unavailable.');
-            $data = array('deleted_at'=>$now);
-            if (isset($parentSchema['updated_date'])) $data['updated_date']=$now;
-            $this->deleteLogbookBoundUpdate($db, 't_logbook', $data,
-                'id=:id AND id_client=:id_client AND id_user=:actor_id AND created_by=:actor_id AND deleted_at IS NULL',
-                array(':id'=>(int)$parent['id'], ':id_client'=>(int)$actor['id_client'], ':actor_id'=>(int)$actor['id']));
-            $transaction->commit();
-            return $this->deleteLogbookJson(true, 'Logbook berhasil dihapus.', 200, array('id'=>(int)$parent['id']));
-        } catch (CHttpException $e) {
-            if ($transaction !== null && $transaction->active) $transaction->rollback();
-            return $this->deleteLogbookJson(false, $e->getMessage(), $e->statusCode);
-        } catch (Throwable $e) {
-            if ($transaction !== null && $transaction->active) $transaction->rollback();
-            Yii::log('DeleteLogbook failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-            return $this->deleteLogbookJson(false, 'Gagal menghapus logbook.', 500);
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $payload = json_decode(file_get_contents('php://input'), true);
+    if (!is_array($payload)) {
+        return $this->deleteLogbookJson(false, 'Payload JSON tidak valid.', 400);
+    }
+    foreach (array('id', 'created_by', 'id_client') as $field) {
+        if (!$this->deleteLogbookPositiveId(isset($payload[$field]) ? $payload[$field] : null)) {
+            return $this->deleteLogbookJson(false, 'Permintaan tidak valid.', 422);
         }
     }
+
+    $db = Yii::app()->dbPrasi;
+    $transaction = null;
+    try {
+        $transaction = $db->beginTransaction();
+        $userColumns = $this->deleteLogbookSchema($db, 'm_user');
+        $actorWhere = 'u.id=:actor_id AND u.id_client=:id_client';
+        if (isset($userColumns['deleted_at'])) {
+            $actorWhere .= ' AND u.deleted_at IS NULL';
+        }
+        $actor = $db->createCommand(
+            'SELECT u.id,u.id_client,LOWER(TRIM(r.name)) AS role_name '
+            . 'FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE ' . $actorWhere
+        )->bindValues(array(
+            ':actor_id' => (int) $payload['created_by'],
+            ':id_client' => (int) $payload['id_client'],
+        ))->queryRow();
+        if (!$actor || !in_array($actor['role_name'], array('ppds', 'staff', 'staff jejaring'), true)) {
+            throw new CHttpException(403, 'Akses tidak diizinkan.');
+        }
+
+        $parentColumns = $this->deleteLogbookSchema($db, 't_logbook');
+        foreach (array('id', 'id_client', 'id_user', 'created_by', 'deleted_at') as $column) {
+            if (!isset($parentColumns[$column])) {
+                throw new RuntimeException('Required logbook schema is unavailable.');
+            }
+        }
+        $parent = $db->createCommand(
+            'SELECT lb.*, ma.is_exam FROM t_logbook lb '
+            . 'INNER JOIN m_action ma ON ma.id=lb.id_action '
+            . 'WHERE lb.id=:id AND lb.id_client=:id_client AND lb.deleted_at IS NULL '
+            . 'FOR UPDATE OF lb'
+        )->bindValues(array(
+            ':id' => (int) $payload['id'],
+            ':id_client' => (int) $actor['id_client'],
+        ))->queryRow();
+        if (!$parent) {
+            throw new CHttpException(404, 'Logbook tidak ditemukan.');
+        }
+
+        $role = $actor['role_name'];
+        $isExam = $parent['is_exam'] === true
+            || $parent['is_exam'] === 1
+            || $parent['is_exam'] === '1'
+            || strtolower((string) $parent['is_exam']) === 'true';
+        $isPpdsOwner = $role === 'ppds'
+            && (int) $parent['id_user'] === (int) $actor['id']
+            && (int) $parent['created_by'] === (int) $actor['id'];
+        $isStaffExamCreator = in_array($role, array('staff', 'staff jejaring'), true)
+            && $isExam
+            && (int) $parent['created_by'] === (int) $actor['id'];
+        if (!$isPpdsOwner && !$isStaffExamCreator) {
+            throw new CHttpException(403, 'Akses tidak diizinkan.');
+        }
+
+        // PPDS keeps the original lifecycle restriction. Staff deletion is only
+        // for its own Exam, whose Lolos result is not a verifier lifecycle.
+        if ($isPpdsOwner && isset($parentColumns['verified_status'])
+            && !in_array(strtolower((string) ($parent['verified_status'] ?: 'pending')), array('pending', 'revised', 'rejected'), true)) {
+            throw new CHttpException(403, 'Logbook tidak dapat dihapus.');
+        }
+        if ($isPpdsOwner) {
+            $statusColumns = $this->deleteLogbookSchema($db, 't_logbook_status', false);
+            if ($statusColumns && isset($statusColumns['id_logbook']) && isset($statusColumns['status'])) {
+                $blocked = $db->createCommand(
+                    'SELECT 1 FROM t_logbook_status s WHERE s.id_logbook=:id_logbook '
+                    . (isset($statusColumns['id_client']) ? 'AND s.id_client=:id_client ' : '')
+                    . (isset($statusColumns['deleted_at']) ? 'AND s.deleted_at IS NULL ' : '')
+                    . "AND LOWER(COALESCE(s.status, 'pending')) NOT IN ('pending','revised','rejected') LIMIT 1"
+                )->bindValues(array(
+                    ':id_logbook' => (int) $parent['id'],
+                    ':id_client' => (int) $actor['id_client'],
+                ))->queryScalar();
+                if ($blocked) {
+                    throw new CHttpException(403, 'Logbook tidak dapat dihapus.');
+                }
+            }
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $this->deleteLogbookSoftDeleteChildren($db, (int) $parent['id'], (int) $actor['id_client'], $now);
+        $data = array('deleted_at' => $now);
+        if (isset($parentColumns['updated_date'])) {
+            $data['updated_date'] = $now;
+        }
+        $this->deleteLogbookBoundUpdate(
+            $db,
+            't_logbook',
+            $data,
+            'id=:id AND id_client=:id_client AND deleted_at IS NULL',
+            array(':id' => (int) $parent['id'], ':id_client' => (int) $actor['id_client'])
+        );
+        $transaction->commit();
+        return $this->deleteLogbookJson(true, 'Logbook berhasil dihapus.', 200, array('id' => (int) $parent['id']));
+    } catch (CHttpException $e) {
+        if ($transaction !== null && $transaction->active) {
+            $transaction->rollback();
+        }
+        return $this->deleteLogbookJson(false, $e->getMessage(), $e->statusCode);
+    } catch (Throwable $e) {
+        if ($transaction !== null && $transaction->active) {
+            $transaction->rollback();
+        }
+        Yii::log('DeleteLogbook failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
+        return $this->deleteLogbookJson(false, 'Gagal menghapus logbook.', 500);
+    }
+}
 
     private function deleteLogbookActor($db, $payload)
     {
@@ -5472,43 +5657,94 @@ private function updateLogbookEmrNullableInteger($value, $field)
 
     private function logbookStatusReplaceScores($db, $post, $parent)
 {
-    $fields = array('score_psikomotor'=>4, 'score_knowledge'=>5, 'score_affective'=>6);
+    $fields = array(
+        'score_psikomotor' => 4,
+        'score_knowledge' => 5,
+        'score_affective' => 6,
+    );
     $provided = array();
     foreach ($fields as $field => $paramId) {
-        if (array_key_exists($field, $post) && $post[$field] !== null && $post[$field] !== '') {
-            if (!is_scalar($post[$field]) || !is_numeric($post[$field])) {
-                throw new RuntimeException('Score ASM harus numerik');
-            }
-            $provided[$paramId] = (float) $post[$field];
+        if (!array_key_exists($field, $post) || $post[$field] === null || $post[$field] === '') {
+            continue;
         }
+        if (!is_scalar($post[$field]) || !is_numeric($post[$field])) {
+            throw new RuntimeException('Score ASM harus numerik');
+        }
+        $provided[$paramId] = (float) $post[$field];
     }
-    if (!$provided) return;
+    if (!$provided) {
+        return;
+    }
     if (count($provided) !== count($fields)) {
         throw new RuntimeException('Lengkapi semua skor ASM sebelum verifikasi');
     }
 
+    $idAction = (string) $parent['id_action'];
+    $idClient = (string) $post['id_client'];
     foreach ($provided as $paramId => $score) {
+        /* Primary path: map exactly to the action ID stored on the logbook.
+         * Tenant installations can have distinct m_action IDs for the same
+         * business action (for example Bimbingan Operasi client 1 vs client 2).
+         * If the tenant-local action has not copied its legacy m_asm_action
+         * rows, fall back only to another m_action with the SAME non-empty
+         * identifier. This is data-driven; no client/action ID is hard-coded.
+         * Published score options and saved rows remain tenant-scoped. */
         $param = $db->createCommand(
             'SELECT ap.id, ap.min_score, ap.max_score FROM m_asm_param ap '
             . 'INNER JOIN m_asm_action aa ON aa.id_asm_param = ap.id '
-            . 'WHERE ap.id = :id AND aa.id_action = :id_action'
-        )->bindValues(array(':id'=>$paramId, ':id_action'=>(string)$parent['id_action']))->queryRow();
-        if (!$param
-            || ($param['min_score'] !== null && $score < (float)$param['min_score'])
-            || ($param['max_score'] !== null && $score > (float)$param['max_score'])) {
+            . 'WHERE ap.id = :id_asm_param AND ('
+            . 'aa.id_action = :id_action OR aa.id_action IN ('
+            . 'SELECT peer.id FROM m_action own '
+            . 'INNER JOIN m_action peer ON peer.identifier = own.identifier '
+            . 'WHERE own.id = :id_action AND own.id_client = :id_client '
+            . "AND own.identifier IS NOT NULL AND TRIM(own.identifier) <> '')"
+            . ')'
+        )->bindValues(array(
+            ':id_asm_param' => $paramId,
+            ':id_action' => $idAction,
+            ':id_client' => $idClient,
+        ))->queryRow();
+        if (!$param) {
+            throw new RuntimeException('Score ASM tidak valid untuk action ini');
+        }
+
+        /* If this action publishes score options, those options are the exact
+         * server-authoritative contract. Otherwise retain legacy min/max rules.
+         * This lets Action 27 accept its published 60/70/80/90 values even if
+         * stale parameter min/max metadata is narrower. */
+        $hasOptions = $db->createCommand(
+            'SELECT 1 FROM m_score_option '
+            . 'WHERE id_action = :id_action AND id_client = :id_client AND score IS NOT NULL LIMIT 1'
+        )->bindValues(array(
+            ':id_action' => $idAction,
+            ':id_client' => $idClient,
+        ))->queryScalar();
+        if ($hasOptions) {
+            $validOption = $db->createCommand(
+                'SELECT 1 FROM m_score_option '
+                . 'WHERE id_action = :id_action AND id_client = :id_client AND score = :score LIMIT 1'
+            )->bindValues(array(
+                ':id_action' => $idAction,
+                ':id_client' => $idClient,
+                ':score' => $score,
+            ))->queryScalar();
+            if (!$validOption) {
+                throw new RuntimeException('Score ASM bukan pilihan yang diizinkan');
+            }
+        } elseif (($param['min_score'] !== null && $score < (float) $param['min_score'])
+            || ($param['max_score'] !== null && $score > (float) $param['max_score'])) {
             throw new RuntimeException('Score ASM tidak valid untuk action ini');
         }
     }
 
-    // Scope replacement to the authenticated verifier. Other verifier scores survive.
     $db->createCommand(
         'DELETE FROM t_logbook_asm WHERE id_logbook = :id_logbook '
         . 'AND id_client = :id_client AND created_date = :verifier_id '
         . 'AND id_asm_param IN (4, 5, 6)'
     )->execute(array(
-        ':id_logbook'=>(string)$parent['id'],
-        ':id_client'=>(string)$post['id_client'],
-        ':verifier_id'=>(string)$post['id_user'],
+        ':id_logbook' => (string) $parent['id'],
+        ':id_client' => $idClient,
+        ':verifier_id' => (string) $post['id_user'],
     ));
 
     foreach ($provided as $paramId => $score) {
@@ -5517,14 +5753,16 @@ private function updateLogbookEmrNullableInteger($value, $field)
             . '(id_logbook, id_client, id_asm_param, score, created_by, created_date) '
             . 'VALUES (:id_logbook, :id_client, :id_asm_param, :score, CURRENT_TIMESTAMP, :verifier_id)'
         )->execute(array(
-            ':id_logbook'=>(string)$parent['id'],
-            ':id_client'=>(string)$post['id_client'],
-            ':id_asm_param'=>$paramId,
-            ':score'=>$score,
-            ':verifier_id'=>(string)$post['id_user'],
+            ':id_logbook' => (string) $parent['id'],
+            ':id_client' => $idClient,
+            ':id_asm_param' => $paramId,
+            ':score' => $score,
+            ':verifier_id' => (string) $post['id_user'],
         ));
     }
 }
+
+
 
     private function logbookStatusNotifyPpds($db, $parent, $post, $status)
     {

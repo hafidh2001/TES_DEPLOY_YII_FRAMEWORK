@@ -2381,7 +2381,7 @@ class ApiWebServiceController extends Controller {
     // === HOSPITAL ===
     
     // === MORBIDITY ===
-    public function actionGetListMorbidity()
+        public function actionGetListMorbidity()
 {
     header('Content-Type: application/json; charset=utf-8');
     $post = json_decode(file_get_contents('php://input'), true);
@@ -2424,8 +2424,7 @@ class ApiWebServiceController extends Controller {
                           AND (unbound_lb.verified IS TRUE
                                OR LOWER(COALESCE(unbound_lb.verified_status, '')) = 'verified')
                           AND (LOWER(COALESCE(unbound_a.identifier, '')) = 'morbiditas'
-                               OR LOWER(COALESCE(unbound_a.name, '')) = 'morbiditas'
-                               OR unbound_a.id = 39)
+                               OR LOWER(COALESCE(unbound_a.name, '')) = 'morbiditas')
                     )
                     THEN
                         /* Semua Morbiditas sudah ter-binding: hitung dari binding */
@@ -2490,8 +2489,7 @@ class ApiWebServiceController extends Controller {
                 ON ma.id = lb.id_action
                AND ma.id_client = lb.id_client
                AND (LOWER(COALESCE(ma.identifier, '')) = 'morbiditas'
-                    OR LOWER(COALESCE(ma.name, '')) = 'morbiditas'
-                    OR ma.id = 39)
+                    OR LOWER(COALESCE(ma.name, '')) = 'morbiditas')
             LEFT JOIN m_action_category category
                 ON category.id = lb.id_category
                AND category.id_action = lb.id_action
@@ -2500,6 +2498,18 @@ class ApiWebServiceController extends Controller {
               AND u.deleted_at IS NULL
               AND u.status = 'Active'
               AND LOWER(role.name) = 'ppds'
+              AND EXISTS (
+                  SELECT 1
+                  FROM t_logbook morbidity_lb
+                  INNER JOIN m_action morbidity_action
+                      ON morbidity_action.id = morbidity_lb.id_action
+                     AND morbidity_action.id_client = morbidity_lb.id_client
+                  WHERE morbidity_lb.id_user = u.id
+                    AND morbidity_lb.id_client = u.id_client
+                    AND morbidity_lb.deleted_at IS NULL
+                    AND (LOWER(COALESCE(morbidity_action.identifier, '')) = 'morbiditas'
+                         OR LOWER(COALESCE(morbidity_action.name, '')) = 'morbiditas')
+              )
             GROUP BY u.id, u.id_stase, u.id_semester, u.display_name, u.code,
                      session.id, session.started_at,
                      stase_boundary.created_date
@@ -2539,6 +2549,7 @@ class ApiWebServiceController extends Controller {
     }
     Yii::app()->end();
 }
+
     
     public function actionGetListMorbidityByUser() {
         $rest_json = file_get_contents("php://input");
@@ -6273,32 +6284,34 @@ public function actionUndoMorbiditasStase()
 
         $sql = "
             SELECT
-                id,
-                id_client,
-                date,
-                ppds,
-                nim,
-                action,
-                semester,
-                stase,
-                pin,
-                peran,
-                category,
-                staff,
-                status,
-                attachment,
-                emr_number,
-                diagnosis,
-                treatment,
-                patient,
-                title
-            FROM v_logbook_summary_general
+                vl.id,
+                vl.id_client,
+                vl.date,
+                vl.ppds,
+                vl.nim,
+                vl.action,
+                vl.semester,
+                vl.stase,
+                vl.pin,
+                vl.peran,
+                vl.category,
+                vl.staff,
+                vl.status,
+                vl.attachment,
+                vl.emr_number,
+                vl.diagnosis,
+                vl.treatment,
+                vl.patient,
+                vl.title,
+                tl.notes
+            FROM v_logbook_summary_general vl
+            LEFT JOIN t_logbook tl ON tl.id = vl.id
             WHERE 
-                id = :id
+                vl.id = :id
         ";
         
         if (!empty($post['staff'])) {
-            $sql      .= " AND staff = '" . $post['staff'] . "'";
+            $sql      .= " AND vl.staff = '" . $post['staff'] . "'";
         }
         $sql .= " LIMIT 1";
 
