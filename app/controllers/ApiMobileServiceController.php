@@ -4118,39 +4118,35 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
         }
     }
 
-    private function createLogbookAttachments($db, $idLogbook, $rows, $idClient)
-    {
-        if (!is_array($rows)) throw new CHttpException(422, 'Attachment harus berupa array.');
-        foreach ($rows as $row) {
-            if (!is_array($row)) throw new CHttpException(422, 'Baris attachment tidak valid.');
-            $path = isset($row['url_file']) ? $row['url_file'] : (isset($row['path']) ? $row['path'] : (isset($row['url']) ? $row['url'] : null));
-            if (!$this->createLogbookSafeAttachmentPath($path)) throw new CHttpException(422, 'Path attachment harus path relatif server yang aman.');
-            // Validate every supplied alias; do not let a safe path mask a device URI.
-            foreach (array('url_file', 'url', 'path') as $field) {
-                if (isset($row[$field]) && !$this->createLogbookSafeAttachmentPath($row[$field])) {
-                    throw new CHttpException(422, 'Path attachment harus path relatif server yang aman.');
-                }
-            }
-            // Persist only the actual Prasi attachment columns. Filename/MIME and
-            // path/url aliases are transport metadata, not database columns.
-            $row['url_file'] = $this->createLogbookNormalPath($path);
-            $data = $this->createLogbookAllowedRow($row, array('name','url_file'), array('id_logbook'=>$idLogbook,'id_client'=>$idClient));
-            foreach (array('url_file','url','path') as $field) {
-                if (isset($data[$field])) $data[$field] = $this->createLogbookNormalPath($data[$field]);
-            }
-            $this->createLogbookInsert($db, 't_logbook_attachment', $data);
-        }
+    /* REPLACE createLogbookAttachments() with this complete method. Add document validation helpers first. */
+private function createLogbookAttachments($db, $idLogbook, $rows, $idClient)
+{
+    if (!is_array($rows) || count($rows)>100) throw new CHttpException(422,'Attachment harus array maksimal 100 file.');
+    $validated=array();$paths=array();
+    // Validate the ENTIRE set before the first child write. Caller retains its
+    // existing action capability/actor/tenant checks and transaction ownership.
+    foreach($rows as $row) {
+        if (!is_array($row) || !isset($row['name'],$row['url_file']) || !is_string($row['name']) || trim($row['name'])==='' || strlen($row['name'])>200 || array_diff(array_keys($row),array('name','url_file','file_name','file_type'))) throw new CHttpException(422,'Baris attachment baru tidak valid.');
+        $path=$this->logbookValidateNewAttachmentReference($row['url_file'],$idClient,$row['name']);
+        if(isset($paths[$path])) throw new CHttpException(422,'Referensi attachment duplikat.');
+        $paths[$path]=true;
+        $validated[]=array('id_logbook'=>$idLogbook,'id_client'=>$idClient,'name'=>trim($row['name']),'url_file'=>$path,'created_date'=>date('Y-m-d H:i:s'),'deleted_at'=>null);
     }
+    foreach($validated as $data) $this->createLogbookInsert($db,'t_logbook_attachment',$data);
+}
+
 
 
 public function actionPrasiUpload()
 {
+    // Content cap: 50,000,000 bytes per file via logbookInspectAttachment();
+    // nginx/PHP cap the entire multipart request independently. Mobile cap is 25 MB.
     // Generic Yii/PHP multipart adapter; route: index.php?r=apiMobileService/prasiUpload.
     // Legacy actionLogin returns IDs, NOT a token/session. This verifies active
     // tenant membership only; it cannot prove the sender owns the supplied ID.
     $method = strtoupper(isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET');
     header('Allow: GET, OPTIONS, POST');
-    header('Access-Control-Expose-Headers: X-Prasi-Upload-Contract');
+    header('Access-Control-Expose-Headers: X-Prasi-Upload-Contract, X-Prasi-Upload-Groups');
     if (!in_array($method, array('GET', 'OPTIONS', 'POST'), true)) {
         $this->hachiGenericUploadReply(405, 'Method not allowed.');
         return;
@@ -4195,12 +4191,13 @@ public function actionPrasiUpload()
     if ($method === 'GET') {
         // Read-only: no directory creation, upload movement, or database writes.
         header('X-Prasi-Upload-Contract: prasi-file-v1');
+        header('X-Prasi-Upload-Groups: label-v1');
         $this->hachiGenericUploadReply(200, 'prasi-file-v1');
         return;
     }
     // PHP separates text fields from filename-keyed file parts (native headers OK).
-    if (count($_FILES) !== 1 || count($_POST) !== 2 ||
-        array_diff(array_keys($_POST), array('id_user', 'id_client'))) {
+    if (count($_FILES) !== 1 || (count($_POST) !== 2 && count($_POST) !== 3) ||
+        array_diff(array_keys($_POST), array('id_user', 'id_client', 'attachment_group'))) {
         $this->hachiGenericUploadReply(400, 'Exactly one file and id_user/id_client text parts required.');
         return;
     }
@@ -4211,68 +4208,341 @@ public function actionPrasiUpload()
         $this->hachiGenericUploadReply(400, 'Invalid multipart file.');
         return;
     }
-    $size = filesize($file['tmp_name']);
-    if ($size === false || $size < 1 || $size > 5 * 1024 * 1024) {
-        $this->hachiGenericUploadReply(413, 'File must be between 1 byte and 5 MiB.');
-        return;
-    }
     try {
-        $finfo = new finfo(FILEINFO_MIME_TYPE);
-        $mime = $finfo->file($file['tmp_name']);
+        $detected = $this->logbookInspectAttachment($file['tmp_name']);
+    } catch (CHttpException $e) {
+        $this->hachiGenericUploadReply($e->statusCode, $e->getMessage());
+        return;
     } catch (Throwable $e) {
-        $this->hachiGenericUploadReply(500, 'Server MIME inspection unavailable.');
+        $this->hachiGenericUploadReply(500, 'Server content inspection unavailable.');
         return;
     }
-    $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp', 'application/pdf'=>'pdf');
-    if (!isset($extensions[$mime])) {
-        $this->hachiGenericUploadReply(415, 'Unsupported server-detected MIME type.');
-        return;
-    }
-    if (strpos($mime, 'image/') === 0 && @getimagesize($file['tmp_name']) === false) {
-        $this->hachiGenericUploadReply(415, 'Invalid image bytes.');
-        return;
-    }
-    // Ignore ?to, original filename and declared MIME. Tenant comes from matched rows.
-    $datePath = date('Y-m/d');
-    $root = realpath(Yii::getPathOfAlias('webroot'));
-    if ($root === false) {
-        $this->hachiGenericUploadReply(500, 'Storage root unavailable.');
-        return;
-    }
-    $directory = $root;
-    // Check each component BEFORE descending/creating: reject symlink escapes.
-    foreach (array('_file', date('Y-m'), date('d'), (string)$clientId) as $segment) {
-        $next = $directory . DIRECTORY_SEPARATOR . $segment;
-        if (is_link($next) || (file_exists($next) && !is_dir($next)) ||
-            (!is_dir($next) && !@mkdir($next, 0750) && !is_dir($next))) {
-            $this->hachiGenericUploadReply(500, 'Storage directory unavailable.');
-            return;
-        }
-        $resolved = realpath($next);
-        if ($resolved === false || strpos($resolved . DIRECTORY_SEPARATOR, $root . DIRECTORY_SEPARATOR) !== 0) {
-            $this->hachiGenericUploadReply(500, 'Unsafe storage directory.');
-            return;
-        }
-        $directory = $resolved;
-    }
+    $group=isset($_POST['attachment_group'])?$_POST['attachment_group']:'attachment';
     try {
-        $name = bin2hex(random_bytes(24)) . '.' . $extensions[$mime];
-    } catch (Throwable $e) {
-        $this->hachiGenericUploadReply(500, 'Secure random name unavailable.');
-        return;
+        $path=$this->logbookStoreAttachment($file['tmp_name'],$file['name'],$group,$clientId,isset($_POST['attachment_group']));
+        $this->hachiGenericUploadReply(200,'/'.$path);
+    } catch (CHttpException $e) {
+        $this->hachiGenericUploadReply($e->statusCode,$e->getMessage());
     }
-    $target = $directory . DIRECTORY_SEPARATOR . $name;
-    if (file_exists($target) || is_link($target) || !move_uploaded_file($file['tmp_name'], $target)) {
-        $this->hachiGenericUploadReply(500, 'Unable to store file.');
-        return;
-    }
-    if (!chmod($target, 0640)) {
-        unlink($target);
-        $this->hachiGenericUploadReply(500, 'Unable to secure file permissions.');
-        return;
-    }
-    $this->hachiGenericUploadReply(200, '/_file/' . $datePath . '/' . $clientId . '/' . $name);
 }
+
+
+
+/* REPLACE these six existing complete methods in latest api-backend.txt.
+ * ADD_SHARED_logbookUploadReceipts.php is also REQUIRED. No DB/schema changes. */
+private function logbookInspectAttachment($file)
+{
+    $reject = function ($message) { throw new CHttpException(415, $message); };
+    $size = @filesize($file);
+    if ($size === false || $size < 1 || $size > 50000000) throw new CHttpException(413, 'File harus 1 byte sampai 50 MB (50.000.000 byte).');
+    if (!class_exists('finfo')) throw new CHttpException(503, 'Server fileinfo diperlukan.');
+    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file);
+    $bytes = file_get_contents($file);
+    if ($bytes === false || strlen($bytes) !== $size) $reject('File tidak dapat dibaca.');
+    $images = array('image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp');
+    if (isset($images[$mime])) {
+        $info = @getimagesize($file);
+        $magic = $mime === 'image/jpeg' ? substr($bytes,0,3) === "\xff\xd8\xff" :
+            ($mime === 'image/png' ? substr($bytes,0,8) === "\x89PNG\r\n\x1a\n" : substr($bytes,0,4)==='RIFF' && substr($bytes,8,4)==='WEBP');
+        if (!$magic || !$info || $info[0] < 1 || $info[1] < 1 || $info[0]*$info[1] > 40000000 || $info['mime'] !== $mime) $reject('Gambar tidak valid atau terlalu besar.');
+        return array('ext'=>$images[$mime],'mime'=>$mime);
+    }
+    if ($mime === 'application/pdf') {
+        // Not a PDF sanitizer: viewers must remain sandboxed. Require PDF structure,
+        // reject obvious active/embedded content and trailing executable polyglots.
+        if (!preg_match('/\A%PDF-1\.[0-9][\r\n]/D',$bytes) || !preg_match('/%%EOF\s*\z/D',$bytes) ||
+            !preg_match('/\b[0-9]+\s+[0-9]+\s+obj\b/',$bytes) || strpos($bytes,'startxref') === false ||
+            preg_match('~/(?:JavaScript|JS|Launch|EmbeddedFile|RichMedia|OpenAction|AA)\b~i',$bytes)) $reject('Struktur PDF tidak valid atau berisi konten aktif.');
+        return array('ext'=>'pdf','mime'=>'application/pdf');
+    }
+    if (substr($bytes,0,8) === "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") {
+        $reject('DOC/XLS/PPT legacy OLE belum didukung secara aman; konversi ke DOCX/XLSX/PPTX tanpa macro atau PDF.');
+    }
+    // Generic ZIP MIME is normal for OOXML. Derive subtype from package content,
+    // never the request suffix or client MIME. Arbitrary archives are not allowed.
+    if (substr($bytes,0,4) !== "PK\x03\x04") $reject('Jenis file server tidak didukung.');
+    if (!class_exists('ZipArchive') || !class_exists('DOMDocument')) throw new CHttpException(503,'Server ZipArchive dan DOM diperlukan untuk Office.');
+    // Require ordinary bounded ZIP: no SFX, ZIP64, archive comment or trailing bytes.
+    $end = strrpos($bytes,"PK\x05\x06");
+    if ($end === false || $end + 22 !== $size) $reject('ZIP Office malformed atau tidak didukung.');
+    $eocd = unpack('vdisk/vstart/ventriesDisk/ventries/VcentralSize/VcentralOffset/vcomment', substr($bytes,$end+4,18));
+    if ($eocd['disk'] || $eocd['start'] || $eocd['comment'] || $eocd['entries'] < 3 || $eocd['entries'] > 512 || $eocd['entriesDisk'] !== $eocd['entries'] || $eocd['centralOffset']+$eocd['centralSize'] !== $end) $reject('ZIP Office tidak bounded.');
+    $zip = new ZipArchive();
+    if ($zip->open($file,ZipArchive::CHECKCONS) !== true) $reject('ZIP Office rusak.');
+    try {
+        if ($zip->numFiles !== $eocd['entries']) $reject('Jumlah ZIP tidak konsisten.');
+        $parts = array(); $total = 0;
+        for ($i=0;$i<$zip->numFiles;$i++) {
+            $stat = $zip->statIndex($i);
+            $name = $stat['name'];
+            if (isset($parts[$name]) || strlen($name)>240 || !preg_match('~^[A-Za-z0-9_\[\]./-]+$~D',$name) || strpos($name,'//')!==false || substr($name,0,1)==='/' || preg_match('~(?:^|/)\.{1,2}(?:/|$)~',$name)) $reject('Path ZIP tidak aman.');
+            if (!isset($stat['encryption_method']) || $stat['encryption_method'] !== ZipArchive::EM_NONE || !in_array($stat['comp_method'],array(0,8),true)) $reject('ZIP terenkripsi/metode tidak didukung.');
+            $total += $stat['size'];
+            if ($stat['size'] > 5000000 || $total > 20000000 || $stat['size'] > max(1,$stat['comp_size'])*100) $reject('ZIP terlalu besar/rasio kompresi tidak aman.');
+            $opsys=0;$attributes=0;
+            if (!$zip->getExternalAttributesIndex($i,$opsys,$attributes) || ($opsys===3 && (($attributes>>16)&0170000)===0120000)) $reject('Symlink ZIP tidak diizinkan.');
+            if (substr($name,-1)==='/') { $parts[$name]=''; continue; }
+            $ext = strtolower(pathinfo($name,PATHINFO_EXTENSION));
+            if (!in_array($ext,array('xml','rels','png','jpg','jpeg','gif'),true) || preg_match('~(?:vba|macro|activex|embeddings|oleobject|scripts)~i',$name)) $reject('Office macro/binary/embedded tidak diizinkan.');
+            $content=$zip->getFromIndex($i,5000001);
+            if ($content===false || strlen($content)!==$stat['size'] || sprintf('%u',crc32($content))!==sprintf('%u',$stat['crc'])) $reject('Isi ZIP tidak konsisten.');
+            if ($ext==='xml' || $ext==='rels') {
+                if (strlen($content)>2000000 || strpos($content,"\0")!==false || preg_match('/<!DOCTYPE|<!ENTITY/i',$content)) $reject('XML Office tidak aman (UTF-8 tanpa DTD/entity diperlukan).');
+                $xml = new DOMDocument();
+                $xml->resolveExternals=false;
+                $xml->substituteEntities=false;
+                $previous=libxml_use_internal_errors(true);
+                $parsed=$xml->loadXML($content,LIBXML_NONET);
+                libxml_clear_errors();libxml_use_internal_errors($previous);
+                if (!$parsed || !$xml->documentElement || $xml->doctype !== null) $reject('XML Office rusak/tidak aman.');
+                if ($ext==='rels') {
+                    foreach ($xml->getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/relationships','Relationship') as $rel) {
+                        if (strcasecmp($rel->getAttribute('TargetMode'),'External')===0 || preg_match('~(?:vba|macro|oleObject|package|activeX|attachedTemplate)~i',$rel->getAttribute('Type')) || preg_match('~^(?:[a-z]+:|/|\\\\)|[\x00-\x1f]~i',$rel->getAttribute('Target'))) $reject('Relasi Office eksternal/aktif tidak diizinkan.');
+                    }
+                }
+                $parts[$name]=$xml;
+            } else {
+                $image=@getimagesizefromstring($content);
+                if (!$image || !in_array($image['mime'],array('image/png','image/jpeg','image/gif'),true) || $image[0]*$image[1]>40000000) $reject('Media Office tidak valid.');
+                $parts[$name]=true;
+            }
+        }
+        if (!isset($parts['[Content_Types].xml'],$parts['_rels/.rels'])) $reject('Manifest Office tidak ditemukan.');
+        $types=array('word/document.xml'=>array('docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml','application/vnd.openxmlformats-officedocument.wordprocessingml.document','document','http://schemas.openxmlformats.org/wordprocessingml/2006/main'), 'xl/workbook.xml'=>array('xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','workbook','http://schemas.openxmlformats.org/spreadsheetml/2006/main'), 'ppt/presentation.xml'=>array('pptx','application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml','application/vnd.openxmlformats-officedocument.presentationml.presentation','presentation','http://schemas.openxmlformats.org/presentationml/2006/main'));
+        $main=null;$subtype=null;
+        foreach($parts['[Content_Types].xml']->getElementsByTagName('*') as $node) {
+            $ct=$node->getAttribute('ContentType');
+            if (preg_match('~macro|vba|oleobject|activex|executable~i',$ct) || ($ct !== '' && !preg_match('~^(?:application/vnd\.openxmlformats-[a-z0-9.+-]+|application/xml|text/xml|image/(?:png|jpeg|gif))$~D',$ct))) $reject('ContentType aktif/tidak dikenal tidak diizinkan.');
+            if ($node->localName==='Override') {
+                $part=ltrim($node->getAttribute('PartName'),'/');
+                if (!isset($parts[$part])) $reject('Part manifest tidak ditemukan.');
+                if (isset($types[$part])) {
+                    if ($main!==null || $ct!==$types[$part][1]) $reject('Subtype Office ambigu/tidak aman.');
+                    $main=$part;$subtype=$types[$part];
+                }
+            }
+        }
+        if ($main===null || !($parts[$main] instanceof DOMDocument) || $parts[$main]->documentElement->localName!==$subtype[3] || $parts[$main]->documentElement->namespaceURI!==$subtype[4]) $reject('Main Office tidak valid.');
+        $linked=0;
+        foreach($parts['_rels/.rels']->getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/relationships','Relationship') as $rel) {
+            if ($rel->getAttribute('Type')==='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument') {
+                if ($rel->getAttribute('Target')!==$main) $reject('Target Office tidak sesuai.');
+                $linked++;
+            }
+        }
+        if ($linked!==1) $reject('Relasi main Office tidak valid.');
+        return array('ext'=>$subtype[0],'mime'=>$subtype[2]);
+    } finally { $zip->close(); }
+}
+private function logbookAttachmentGroup($label)
+{
+    $label = strtolower(trim((string)$label));
+    if (in_array($label,array('before','attachment before','attachment-before'),true)) return 'attachment-before';
+    if (in_array($label,array('after','attachment after','attachment-after'),true)) return 'attachment-after';
+    return 'attachment';
+}
+private function logbookAttachmentFilename($name, $ext)
+{
+    if (!is_string($name) || !preg_match('//u',$name) || preg_match('~[\x00-\x1f\x7f/\\\\]~u',$name)) throw new CHttpException(422,'Nama file tidak aman.');
+    $stem = pathinfo($name,PATHINFO_FILENAME);
+    $stem = preg_replace('/[^\p{L}\p{M}\p{N} _()-]/u','-',$stem);
+    $stem = trim(preg_replace('/ +/u',' ',$stem),' .-_');
+    while (strlen($stem)>150) $stem=preg_replace('/.$/us','',$stem);
+    if ($stem==='') $stem='attachment';
+    return $stem.'.'.$ext;
+}
+private function logbookStorageFailure($reason, $path)
+{
+    // Server logs only: no filenames, actor IDs, request payload, or credentials.
+    // Correlate by reason and UTC time. Paths are limited to server-owned directories.
+    $error=error_get_last();
+    $data=array('reason'=>$reason,'directory'=>$path,'exists'=>file_exists($path),'directory_type'=>is_dir($path),'symlink'=>is_link($path),'parent_writable'=>is_writable(dirname($path)),'open_basedir'=>(string)ini_get('open_basedir'),'php_error_type'=>isset($error['type'])?$error['type']:null);
+    Yii::log(json_encode($data,JSON_UNESCAPED_SLASHES),'error','logbook.upload.storage');
+    throw new CHttpException(500,'Storage directory unavailable.');
+}
+private function logbookStoreAttachment($source, $originalName, $group, $clientId, $labelBound=true)
+{
+    if (!in_array($group,array('attachment','attachment-before','attachment-after'),true) || !preg_match('/^[1-9][0-9]*$/D',(string)$clientId)) throw new CHttpException(422,'Grup/tenant upload tidak valid.');
+    $info=$this->logbookInspectAttachment($source);
+    $name=$this->logbookAttachmentFilename($originalName,$info['ext']);
+    $stem=pathinfo($name,PATHINFO_FILENAME);
+    while(strlen($stem)>120) $stem=preg_replace('/.$/us','',$stem);
+    $name=rtrim($stem).'.'.$info['ext'];
+    $date=(new \DateTimeImmutable('now',new \DateTimeZone('Asia/Jakarta')))->format('Y-m/d');
+    $root=realpath(Yii::getPathOfAlias('webroot'));
+    if ($root===false) $this->logbookStorageFailure('root_unavailable',Yii::getPathOfAlias('webroot'));
+    $directory=$root;
+    foreach(explode('/','_file/'.$date.'/'.$group) as $segment) {
+        $next=$directory.DIRECTORY_SEPARATOR.$segment;
+        clearstatcache(true,$next);
+        if (is_link($next) || (file_exists($next)&&!is_dir($next))) $this->logbookStorageFailure('unsafe_component',$next);
+        if (!is_dir($next)) {
+            error_clear_last();$made=@mkdir($next,0750);
+            // A concurrent worker may have created it. Refresh cached stat BEFORE checking.
+            clearstatcache(true,$next);
+            if (!$made&&!is_dir($next)) $this->logbookStorageFailure('mkdir_failed',$next);
+        }
+        clearstatcache(true,$next);
+        $resolved=realpath($next);
+        if (is_link($next)||$resolved===false||strpos($resolved.DIRECTORY_SEPARATOR,$root.DIRECTORY_SEPARATOR)!==0) $this->logbookStorageFailure('unsafe_resolved_component',$next);
+        $directory=$resolved;
+    }
+    // Exclusive creation, not check-then-move: duplicate names can NEVER overwrite.
+    for($attempt=0;$attempt<8;$attempt++) {
+        $candidate=$attempt===0?$name:pathinfo($name,PATHINFO_FILENAME).'--'.bin2hex(random_bytes(8)).'.'.$info['ext'];
+        $target=$directory.DIRECTORY_SEPARATOR.$candidate;
+        $out=@fopen($target,'xb');
+        if ($out===false) {
+            clearstatcache(true,$target);
+            if (file_exists($target)||is_link($target)) continue;
+            $this->logbookStorageFailure('exclusive_create_failed',$directory);
+        }
+        $in=@fopen($source,'rb');
+        try {
+            if ($in===false || !chmod($target,0640) || stream_copy_to_stream($in,$out)!==filesize($source) || !fflush($out)) throw new CHttpException(500,'Unable to store file.');
+        } catch (Throwable $e) { fclose($out);if(is_resource($in))fclose($in);unlink($target);throw $e; }
+        fclose($out);fclose($in);
+        $path='_file/'.$date.'/'.$group.'/'.rawurlencode($candidate);
+        try {
+            $this->logbookWriteUploadReceipt($path,$target,$clientId,$group,$labelBound);
+        } catch (Throwable $e) {
+            // No reference is issued unless private ownership metadata was written.
+            @unlink($target);
+            if ($e instanceof CHttpException && $e->statusCode===409) continue;
+            throw $e;
+        }
+        return $path;
+    }
+    throw new CHttpException(500,'Unable to allocate unique storage name.');
+}
+private function logbookValidateNewAttachmentReference($path, $idClient, $label=null)
+{
+    if (!is_string($path)) throw new CHttpException(422,'Referensi upload tidak valid.');
+    $tenant=preg_quote((string)$idClient,'~');
+    $legacy=preg_match('~^_file/[0-9]{4}-[0-9]{2}/[0-9]{2}/'.$tenant.'/[a-f0-9]{48}\.(jpg|png|webp|pdf|docx|xlsx|pptx)$~D',$path);
+    $grouped=preg_match('~^_file/([0-9]{4}-[0-9]{2})/([0-9]{2})/(attachment|attachment-before|attachment-after)/'.$tenant.'/([^/]+)$~D',$path,$m);
+    $flat=false;
+    if (!$grouped) $flat=preg_match('~^_file/([0-9]{4}-[0-9]{2})/([0-9]{2})/(attachment|attachment-before|attachment-after)/([^/]+)$~D',$path,$m);
+    if (!$legacy&&!$grouped&&!$flat) throw new CHttpException(422,'Referensi upload bukan milik tenant/format server.');
+    if ($grouped||$flat) {
+        $name=rawurldecode($m[4]);$ext=pathinfo($name,PATHINFO_EXTENSION);
+        if (!in_array($ext,array('jpg','png','webp','pdf','docx','xlsx','pptx'),true)||rawurlencode($name)!==$m[4]||$this->logbookAttachmentFilename($name,$ext)!==$name || ($grouped&&$label!==null&&$this->logbookAttachmentGroup($label)!==$m[3])) throw new CHttpException(422,'Nama/grup attachment tidak sesuai.');
+        if (!checkdate((int)substr($m[1],5,2),(int)$m[2],(int)substr($m[1],0,4))) throw new CHttpException(422,'Tanggal storage tidak valid.');
+    }
+    $root=realpath(Yii::getPathOfAlias('webroot'));
+    if ($root===false) throw new CHttpException(422,'Storage tidak tersedia.');
+    $current=$root;
+    foreach(explode('/',rawurldecode($path)) as $segment) {
+        $current.=DIRECTORY_SEPARATOR.$segment;clearstatcache(true,$current);
+        if (is_link($current)) throw new CHttpException(422,'Symlink attachment tidak diizinkan.');
+    }
+    $file=realpath($current);
+    if ($file===false || strpos($file,$root.DIRECTORY_SEPARATOR)!==0 || !is_file($file) || !is_readable($file)) throw new CHttpException(422,'File upload tidak ditemukan.');
+    $info=$this->logbookInspectAttachment($file);
+    if (strtolower(pathinfo($file,PATHINFO_EXTENSION))!==$info['ext']) throw new CHttpException(422,'Ekstensi storage tidak sesuai isi file.');
+    if ($flat) {
+        $receipt=$this->logbookVerifyUploadReceipt($path,$file,$idClient,$m[3]);
+        if ($label!==null&&$receipt['label_bound']&&$this->logbookAttachmentGroup($label)!==$m[3]) throw new CHttpException(422,'Nama/grup attachment tidak sesuai.');
+    }
+    return $path;
+}
+
+
+
+/* ADD once: private server-owned upload receipts. Never expose this directory over HTTP. */
+private function logbookReceiptDirectory()
+{
+    $runtime=realpath(Yii::app()->getRuntimePath());
+    $root=realpath(Yii::getPathOfAlias('webroot'));
+    if ($runtime===false || $root===false) throw new CHttpException(500,'Private upload metadata unavailable.');
+    // Runtime may be assets/runtime on this deployment. HTTP deny rules are required.
+    // Never permit metadata anywhere inside the public blob tree, even via aliases.
+    $public=realpath($root.DIRECTORY_SEPARATOR.'_file');
+    if ($public!==false && ($runtime===$public || strpos($runtime.DIRECTORY_SEPARATOR,$public.DIRECTORY_SEPARATOR)===0)) throw new CHttpException(500,'Private upload metadata unavailable.');
+    $directory=$runtime;
+    foreach(array('logbook-upload-receipts',hash('sha256',$root)) as $segment) {
+        $next=$directory.DIRECTORY_SEPARATOR.$segment;
+        clearstatcache(true,$next);
+        if (is_link($next) || (file_exists($next)&&!is_dir($next))) throw new CHttpException(500,'Private upload metadata unavailable.');
+        if (!is_dir($next)) {
+            $made=@mkdir($next,0700);clearstatcache(true,$next);
+            if (!$made&&!is_dir($next)) throw new CHttpException(500,'Private upload metadata unavailable.');
+        }
+        $resolved=realpath($next);
+        if (is_link($next)||$resolved===false||strpos($resolved.DIRECTORY_SEPARATOR,$runtime.DIRECTORY_SEPARATOR)!==0||!@chmod($resolved,0700)) throw new CHttpException(500,'Private upload metadata unavailable.');
+        $directory=$resolved;
+    }
+    return $directory;
+}
+private function logbookReceiptKey($directory, $create)
+{
+    $path=$directory.DIRECTORY_SEPARATOR.'owner.key';
+    clearstatcache(true,$path);
+    if (is_link($path)||(!$create&&!is_file($path))) throw new CHttpException(500,'Private upload metadata unavailable.');
+    // A process-wide lock serializes initial key creation and readers; no partial key reads.
+    $stream=@fopen($path,$create?'c+b':'rb');
+    if ($stream===false) throw new CHttpException(500,'Private upload metadata unavailable.');
+    try {
+        if (!flock($stream,LOCK_EX)) throw new CHttpException(500,'Private upload metadata unavailable.');
+        $key=stream_get_contents($stream,65);
+        if ($key===''&&$create) {
+            $key=random_bytes(32);
+            if (!@chmod($path,0600)||fwrite($stream,$key)!==32||!fflush($stream)) throw new CHttpException(500,'Private upload metadata unavailable.');
+        }
+        if (!is_string($key)||strlen($key)!==32) throw new CHttpException(500,'Private upload metadata unavailable.');
+        return $key;
+    } finally {flock($stream,LOCK_UN);fclose($stream);}
+}
+private function logbookReceiptSignature($data, $key)
+{
+    // Explicit canonical tuple, independent of JSON field order or extra fields.
+    return hash_hmac('sha256',json_encode(array($data['version'],$data['path'],$data['client'],$data['group'],$data['sha256'],$data['label_bound']),JSON_UNESCAPED_SLASHES),$key);
+}
+private function logbookWriteUploadReceipt($path, $file, $client, $group, $labelBound)
+{
+    $directory=$this->logbookReceiptDirectory();
+    $key=$this->logbookReceiptKey($directory,true);
+    $hash=hash_file('sha256',$file);
+    if ($hash===false) throw new CHttpException(500,'Private upload metadata unavailable.');
+    if (!is_bool($labelBound)||(!$labelBound&&$group!=='attachment')) throw new CHttpException(500,'Private upload metadata unavailable.');
+    $data=array('version'=>1,'path'=>$path,'client'=>(int)$client,'group'=>$group,'sha256'=>$hash,'label_bound'=>$labelBound);
+    $data['signature']=$this->logbookReceiptSignature($data,$key);
+    $json=json_encode($data,JSON_UNESCAPED_SLASHES);
+    $target=$directory.DIRECTORY_SEPARATOR.hash('sha256',$path).'.json';
+    // An old/orphaned receipt is never reassigned, even if its blob was removed.
+    $stream=@fopen($target,'xb');
+    if ($stream===false) {
+        clearstatcache(true,$target);
+        if (file_exists($target)||is_link($target)) throw new CHttpException(409,'Upload name already reserved.');
+        throw new CHttpException(500,'Private upload metadata unavailable.');
+    }
+    try {
+        if (!is_string($json)||!@chmod($target,0600)||fwrite($stream,$json)!==strlen($json)||!fflush($stream)) throw new CHttpException(500,'Private upload metadata unavailable.');
+    } catch (Throwable $e) {fclose($stream);@unlink($target);throw $e;}
+    fclose($stream);
+}
+private function logbookVerifyUploadReceipt($path, $file, $client, $group)
+{
+    $deny=function(){throw new CHttpException(422,'Referensi upload bukan milik tenant/receipt server.');};
+    try {
+        $directory=$this->logbookReceiptDirectory();
+        $key=$this->logbookReceiptKey($directory,false);
+        $receipt=$directory.DIRECTORY_SEPARATOR.hash('sha256',$path).'.json';
+        clearstatcache(true,$receipt);
+        if (is_link($receipt)||!is_file($receipt)||filesize($receipt)>4096) $deny();
+        $json=@file_get_contents($receipt);
+        $data=is_string($json)?json_decode($json,true):null;
+        if (!is_array($data)||!isset($data['version'],$data['path'],$data['client'],$data['group'],$data['sha256'],$data['signature'],$data['label_bound'])||
+            $data['version']!==1||$data['path']!==$path||$data['client']!==(int)$client||$data['group']!==$group||
+            !is_bool($data['label_bound'])||(!$data['label_bound']&&$group!=='attachment')||!is_string($data['sha256'])||!preg_match('/^[a-f0-9]{64}$/D',$data['sha256'])||!is_string($data['signature'])||
+            !hash_equals($this->logbookReceiptSignature($data,$key),$data['signature'])) $deny();
+        $actual=hash_file('sha256',$file);
+        if (!is_string($actual)||!hash_equals($data['sha256'],$actual)) $deny();
+        return $data;
+    } catch (Throwable $e) {$deny();}
+}
+
+
 
 
 
@@ -4763,13 +5033,14 @@ protected function hachiGenericUploadReply($statusCode, $body)
 }
     
     
+   /* Add this helper inside the controller once. actionSaveLogbookUpdate() calls it. */
     private function updateLogbookSyncAttachments($db, $rows, $action, $idLogbook, $idClient, $now, $validateOnly = false)
     {
         if (!$this->updateLogbookFlag($action, 'has_attachment')) {
             throw new CHttpException(422, 'Attachment tidak diizinkan.');
         }
         if (!is_array($rows) || count($rows) > 100) {
-            throw new CHttpException(422, 'Attachment harus berupa array, maksimal 100 gambar.');
+            throw new CHttpException(422, 'Attachment harus berupa array, maksimal 100 file.');
         }
         $schema = $this->updateLogbookSchema($db, 't_logbook_attachment', false);
         foreach (array('id', 'id_logbook', 'name', 'url_file') as $column) {
@@ -4803,7 +5074,7 @@ protected function hachiGenericUploadReply($statusCode, $body)
         $keep = array();
         $new = array();
         $paths = array();
-        $root = realpath(Yii::getPathOfAlias('webroot'));
+
         foreach ($rows as $row) {
             if (!is_array($row)) throw new CHttpException(422, 'Baris attachment tidak valid.');
             if (array_key_exists('id', $row)) {
@@ -4825,29 +5096,8 @@ protected function hachiGenericUploadReply($statusCode, $body)
             if ($labels && !in_array($name, $labels, true)) {
                 throw new CHttpException(422, 'Label attachment tidak sesuai action.');
             }
-            $path = str_replace('\\', '/', $row['url_file']);
-            // Accept current generic upload output: _file/YYYY-M/D/[optional client/]<safe filename>.
-            // The file must exist under this deployment's webroot and pass MIME/image verification.
-            if (!preg_match('#^_file/[0-9]{4}-[0-9]{1,2}/[0-9]{1,2}/[A-Za-z0-9._/-]+$#D', $path)
-                || strpos($path, '//') !== false || isset($paths[$path])) {
-                throw new CHttpException(422, 'Path upload baru tidak valid.');
-            }
-            $segments = explode('/', $path);
-            foreach ($segments as $segment) {
-                if ($segment === '' || $segment === '.' || $segment === '..') {
-                    throw new CHttpException(422, 'Path upload baru tidak valid.');
-                }
-            }
-            $file = $root === false ? false : realpath($root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $path));
-            if ($file === false || strpos($file, $root . DIRECTORY_SEPARATOR) !== 0 || !is_file($file) || !is_readable($file)) {
-                throw new CHttpException(422, 'File hasil upload tidak ditemukan.');
-            }
-            $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file);
-            $extensions = array('image/jpeg'=>'jpg', 'image/png'=>'png', 'image/webp'=>'webp');
-            if (!isset($extensions[$mime]) || strtolower(pathinfo($file, PATHINFO_EXTENSION)) !== $extensions[$mime]
-                || @getimagesize($file) === false || filesize($file) < 1 || filesize($file) > 5 * 1024 * 1024) {
-                throw new CHttpException(422, 'File upload bukan gambar valid.');
-            }
+            $path = $this->logbookValidateNewAttachmentReference($row['url_file'], $idClient, $name);
+            if (isset($paths[$path])) throw new CHttpException(422, 'Referensi attachment duplikat.');
             $paths[$path] = true;
             $data = array('id_logbook'=>$idLogbook, 'name'=>$name, 'url_file'=>$path);
             if (isset($schema['id_client'])) $data['id_client'] = $idClient;
@@ -4875,6 +5125,7 @@ protected function hachiGenericUploadReply($statusCode, $body)
         if ($validateOnly) return $apply;
         $apply();
     }
+
 
 
 
@@ -5329,7 +5580,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
     
     // ini adalah verifieddddddddddddddddddddddddddddddddddddd
     /* REPLACE the entire existing actionUpdateLogbookStatus() method; do not append. */
-    public function actionUpdateLogbookStatus()
+        public function actionUpdateLogbookStatus()
     {
         header('Content-Type: application/json; charset=utf-8');
 
@@ -5417,17 +5668,40 @@ private function updateLogbookEmrNullableInteger($value, $field)
             // Legacy deployments can omit the word "morbiditas" from the action label.
             // ID 39 is the tenant's canonical Morbiditas action.
             $isMorbiditasAction = preg_match('/morbiditas/', $actionText) || (int)$parent['id_action'] === 39;
+            /* A completed Morbiditas chain is final.  Do not let one verifier
+             * reopen Pelapor -> Penilai/GKM -> KPS using generic Unverif. */
+            if ($status === 'revised' && $isMorbiditasAction) {
+                $completedRows = $db->createCommand(
+                    'SELECT status FROM t_logbook_status WHERE id_logbook = :id_logbook '
+                    . (isset($statusColumns['id_client']) ? 'AND id_client = :id_client ' : '')
+                    . (isset($statusColumns['deleted_at']) ? 'AND deleted_at IS NULL ' : '')
+                    . 'FOR UPDATE'
+                )->bindValues(isset($statusColumns['id_client'])
+                    ? array(':id_logbook'=>(string)$post['id_logbook'], ':id_client'=>(string)$post['id_client'])
+                    : array(':id_logbook'=>(string)$post['id_logbook'])
+                )->queryAll();
+                $allCompleted = count($completedRows) > 0;
+                foreach ($completedRows as $completedRow) {
+                    if (strtolower(trim((string)$completedRow['status'])) !== 'verified') {
+                        $allCompleted = false;
+                        break;
+                    }
+                }
+                if ($allCompleted) {
+                    throw new RuntimeException('Morbiditas sudah diverifikasi lengkap dan tidak dapat di-unverif');
+                }
+            }
             $targetRoleText = strtolower((string)$targetRows[0]['action_role_identifier'] . ' ' . (string)$targetRows[0]['action_role_name']);
             $isMorbiditasReporterOrAssessor = $isMorbiditasAction
                 && preg_match('/pelapor|penilai|gkm|reporter|assessor/', $targetRoleText);
 
-            /* A Pelapor/Penilai may only Verify or Reject after a category is selected.
+            /* Only Verify by Pelapor/Penilai requires a category. Reject never changes it.
              * Category IDs are validated against this exact action and tenant; a client
              * cannot satisfy this gate using a category from another activity. */
-            if (in_array($status, array('verified', 'rejected'), true) && $isMorbiditasReporterOrAssessor) {
+            if ($status === 'verified' && $isMorbiditasReporterOrAssessor) {
                 $categoryId = array_key_exists('id_category', $post) ? $post['id_category'] : $parent['id_category'];
                 if (!$this->logbookStatusIsPositiveNumericId($categoryId)) {
-                    throw new RuntimeException('Kategori Morbiditas wajib dipilih sebelum verifikasi atau reject');
+                    throw new RuntimeException('Kategori Morbiditas wajib dipilih sebelum verifikasi');
                 }
                 $category = $db->createCommand(
                     'SELECT id FROM m_action_category WHERE id = :id_category AND id_action = :id_action AND id_client = :id_client'
@@ -5653,6 +5927,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
             ));
         }
     }
+
 
 
     private function logbookStatusReplaceScores($db, $post, $parent)

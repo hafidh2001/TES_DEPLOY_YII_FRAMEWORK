@@ -430,7 +430,7 @@ class ApiWebServiceController extends Controller {
     public function actionGetMasterStaff() {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-        
+    
         if (!isset($post['id_client'])) {
             echo json_encode([
                 'status' => false,
@@ -438,29 +438,32 @@ class ApiWebServiceController extends Controller {
             ]);
             Yii::app()->end();
         }
-
+    
         $sql = 'SELECT DISTINCT ON (mu.display_name)
                     mu.id,
                     mu.display_name AS "name"
                 FROM t_logbook_status tls
-                LEFT JOIN m_user mu ON mu.id = tls.id_user
-                LEFT JOIN m_action_role mar ON mar.id = tls.id_action_role
+                INNER JOIN m_user mu ON mu.id = tls.id_user
+                INNER JOIN m_action_role mar ON mar.id = tls.id_action_role
                 WHERE
-                    mu.deleted_at IS NULL
+                    tls.deleted_at IS NULL
+                AND mu.deleted_at  IS NULL
+                AND mu.is_show    = true
                 AND mar.id_client = :id_client
-                AND mar.role      != :role_name 
+                AND mu.id_client = :id_client
+                AND mar.role     != :role_name
                 ORDER BY
                     mu.display_name ASC';
-        
+    
         $res = Yii::app()->db->createCommand($sql)
             ->bindValue(':id_client', $post['id_client'])
             ->bindValue(':role_name', 'Peserta')
             ->queryAll();
-        
+    
         echo json_encode([
-            'status'  => true,
-            'total'   => count($res),
-            'data'    => $res
+            'status' => true,
+            'total'  => count($res),
+            'data'   => $res
         ]);
     }
     
@@ -1528,8 +1531,7 @@ class ApiWebServiceController extends Controller {
                         mu.id_client  = :id_client
                     AND mu.status     = :status
                     AND mu.is_show    = :is_show
-                    AND mu.deleted_at IS NULL
-                    AND mr.name ILIKE :role_name";
+                    AND mu.deleted_at IS NULL";
     
         $params = [
             ':id_client' => $post['id_client'],
@@ -1552,8 +1554,12 @@ class ApiWebServiceController extends Controller {
         }
         
         if (!empty($post['role'])) {
-            $params[':role_name'] = '%' . $post['role'] . '%';
+            $sql      .= ' AND mr.name = :role_name';
+            $countSql .= ' AND mr.name = :role_name';
+            $params[':role_name'] = $post['role'];
         } else {
+            $sql      .= ' AND mr.name ILIKE :role_name';
+            $countSql .= ' AND mr.name ILIKE :role_name';
             $params[':role_name'] = '%staff%';
         }
 
@@ -6273,7 +6279,7 @@ public function actionUndoMorbiditasStase()
     {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
-
+    
         if (!isset($post['id'])) {
             echo json_encode([
                 'status'  => false,
@@ -6281,7 +6287,7 @@ public function actionUndoMorbiditasStase()
             ]);
             Yii::app()->end();
         }
-
+    
         $sql = "
             SELECT
                 vl.id,
@@ -6306,19 +6312,25 @@ public function actionUndoMorbiditasStase()
                 tl.notes
             FROM v_logbook_summary_general vl
             LEFT JOIN t_logbook tl ON tl.id = vl.id
-            WHERE 
-                vl.id = :id
+            WHERE vl.id = :id
         ";
-        
+    
         if (!empty($post['staff'])) {
-            $sql      .= " AND vl.staff = '" . $post['staff'] . "'";
+            $sql .= " AND vl.staff = :staff";
         }
+    
         $sql .= " LIMIT 1";
-
+    
         $command = Yii::app()->db->createCommand($sql);
+    
         $command->bindValue(':id', $post['id'], PDO::PARAM_INT);
+    
+        if (!empty($post['staff'])) {
+            $command->bindValue(':staff', $post['staff'], PDO::PARAM_STR);
+        }
+    
         $data = $command->queryRow();
-
+    
         if (!$data) {
             echo json_encode([
                 'status'  => false,
@@ -6326,7 +6338,7 @@ public function actionUndoMorbiditasStase()
             ]);
             Yii::app()->end();
         }
-
+    
         echo json_encode([
             'status'  => true,
             'message' => 'Success',
