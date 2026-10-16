@@ -352,57 +352,112 @@ public function actionSaveMenuConfig()
  * The app calls this whenever the PPDS Home dashboard becomes visible, so the
  * displayed Stase, Semester, and Morbiditas points do not remain a stale login snapshot.
  */
-public function actionGetDashboardMorbiditasState()
+/* Add once inside ApiMobileServiceController. Requires morbiditas-semester-undo.sql.
+ * Legacy stateless identity compatibility: membership/role is checked, not sender authentication.
+ * No timestamp inference: legacy rows need explicitly audited session-to-milestone links.
+ */
+private function morbiditasSemesterUndoContext($db, $post, $write = false)
 {
-    header('Content-Type: application/json; charset=utf-8');
-    $post = json_decode(file_get_contents('php://input'), true);
-    foreach (array('id_user', 'id_client') as $field) {
-        if (!is_array($post) || !isset($post[$field]) || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
-            echo json_encode(array('success'=>false, 'message'=>$field.' wajib berupa ID positif'));
-            Yii::app()->end();
+    foreach (array('created_by','id_client','id_user') as $field) {
+        if (!is_array($post) || !isset($post[$field]) || !is_scalar($post[$field])
+            || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
+            throw new RuntimeException($field.' wajib berupa ID positif');
         }
     }
-
-    try {
-        $db = Yii::app()->dbPrasi;
-        $idUser = (int)$post['id_user'];
-        $idClient = (int)$post['id_client'];
-        $user = $db->createCommand("SELECT u.id,u.id_client,u.id_semester,u.id_stase,
-                sem.name AS semester_name,st.name AS stase_name
-            FROM m_user u
-            INNER JOIN m_role r ON r.id=u.id_role
-            LEFT JOIN m_semester sem ON sem.id=u.id_semester AND sem.id_client=u.id_client
-            LEFT JOIN m_stase st ON st.id=u.id_stase AND st.id_client=u.id_client
-            WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL
-              AND u.status='Active' AND lower(r.name)='ppds'")
-            ->bindValues(array(':user'=>$idUser, ':client'=>$idClient))->queryRow();
-        if (!$user) throw new RuntimeException('PPDS aktif tidak ditemukan untuk client ini');
-
-        $this->ensureMorbiditasPointsSessionTable($db);
-        $session = $db->createCommand('SELECT started_at FROM t_morbiditas_points_history
-            WHERE id_user=:user AND id_client=:client AND id_semester=:semester AND ended_at IS NULL
-            ORDER BY id DESC LIMIT 1')
-            ->bindValues(array(':user'=>$idUser, ':client'=>$idClient, ':semester'=>(int)$user['id_semester']))
-            ->queryRow();
-        $points = $this->calculateMorbiditasSessionPoints(
-            $db, $idUser, $idClient, (int)$user['id_semester'],
-            $session ? $session['started_at'] : '1970-01-01 00:00:00+00'
-        );
-
-        echo json_encode(array('success'=>true, 'data'=>array(
-            'id_user'=>$idUser,
-            'id_client'=>$idClient,
-            'id_semester'=>$user['id_semester'] === null ? null : (int)$user['id_semester'],
-            'semester_name'=>$user['semester_name'],
-            'id_stase'=>$user['id_stase'] === null ? null : (int)$user['id_stase'],
-            'stase_name'=>$user['stase_name'],
-            'total_points'=>$points,
-        )));
-    } catch (Exception $e) {
-        echo json_encode(array('success'=>false, 'message'=>$e->getMessage()));
+    $client=(int)$post['id_client']; $actor=(int)$post['created_by']; $user=(int)$post['id_user'];
+    $allowed=$db->createCommand("SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role
+        WHERE u.id=:actor AND u.id_client=:client AND u.deleted_at IS NULL
+          AND u.status='Active' AND u.is_show=true
+          AND lower(r.name) IN ('staff','staff jejaring','institution','institution-admin') FOR SHARE OF u")
+        ->bindValues(array(':actor'=>$actor,':client'=>$client))->queryRow();
+    if (!$allowed) throw new RuntimeException('Aktor tidak berhak menjalankan Undo Morbiditas');
+    // Same lock order as Milestone Create: PPDS -> sessions -> milestone.
+    $ppds=$db->createCommand("SELECT u.id,u.display_name,u.id_semester,u.id_stase FROM m_user u JOIN m_role r ON r.id=u.id_role
+        WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL
+          AND u.status='Active' AND u.is_show=true AND lower(r.name)='ppds' FOR UPDATE OF u")
+        ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
+    if (!$ppds) throw new RuntimeException('PPDS aktif tidak ditemukan untuk client ini');
+    if ($write) {
+        // Also cover legacy/unbound writers which do not acquire the PPDS lock.
+        // Short, conservative global write lock; never hold across network calls.
+        $db->createCommand('LOCK TABLE t_logbook IN SHARE ROW EXCLUSIVE MODE')->execute();
     }
-    Yii::app()->end();
+    $sessions=$db->createCommand('SELECT * FROM t_morbiditas_points_history
+        WHERE id_user=:user AND id_client=:client AND ended_at IS NULL FOR UPDATE')
+        ->bindValues(array(':user'=>$user,':client'=>$client))->queryAll();
+    if (count($sessions)!==1) throw new RuntimeException('Harus ada tepat satu sesi aktif; muat ulang atau perbaiki riwayat sesi');
+    $open=$sessions[0];
+    if (!empty($open['undone_at']) || empty($open['transition_logbook_id']) || empty($open['previous_session_id'])) {
+        throw new RuntimeException('Sesi aktif tidak memiliki bukti transisi semester; riwayat lama perlu ditautkan melalui audit, bukan ditebak');
+    }
+    if ((int)$ppds['id_semester']!==(int)$open['id_semester'] || $ppds['id_stase']!==$open['id_stase']) {
+        throw new RuntimeException('Profil PPDS tidak cocok dengan sesi transisi aktif; Undo hanya untuk perubahan semester terakhir');
+    }
+    $newer=$db->createCommand('SELECT id FROM t_morbiditas_points_history
+        WHERE id_user=:user AND id_client=:client AND id>:id AND undone_at IS NULL LIMIT 1')
+        ->bindValues(array(':user'=>$user,':client'=>$client,':id'=>(int)$open['id']))->queryRow();
+    if ($newer) throw new RuntimeException('Sesi aktif bukan transisi terakhir yang sah');
+    $restore=$db->createCommand('SELECT * FROM t_morbiditas_points_history
+        WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at=:transition_started AND undone_at IS NULL FOR UPDATE')
+        ->bindValues(array(':id'=>(int)$open['previous_session_id'],':user'=>$user,':client'=>$client,':transition_started'=>$open['started_at']))->queryRow();
+    if (!$restore || (int)$restore['id'] >= (int)$open['id'] || (int)$restore['id_semester']===(int)$open['id_semester']) {
+        throw new RuntimeException('Tidak ada sesi perubahan semester sebelumnya yang terbukti aman untuk Undo');
+    }
+    $target=$db->createCommand("SELECT lb.* FROM t_logbook lb JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+        WHERE lb.id=:id AND lb.id_user=:user AND lb.id_client=:client AND lb.deleted_at IS NULL
+          AND lb.id_semester=:semester AND lb.id_stase IS NOT DISTINCT FROM :stase
+          AND a.is_milestone=true AND a.show_on_milestone=true
+          AND (lower(coalesce(a.identifier,''))='stase' OR lower(coalesce(a.name,''))='stase') FOR UPDATE OF lb")
+        ->bindValues(array(':id'=>(int)$open['transition_logbook_id'],':user'=>$user,':client'=>$client,
+            ':semester'=>(int)$open['id_semester'],':stase'=>$open['id_stase']))->queryRow();
+    if (!$target) throw new RuntimeException('Milestone transisi aktif tidak cocok atau sudah diarsipkan');
+    if (isset($post['id_logbook']) && (!is_scalar($post['id_logbook'])
+        || !preg_match('/^[1-9][0-9]*$/',(string)$post['id_logbook']) || (int)$post['id_logbook']!==(int)$target['id'])) {
+        throw new RuntimeException('id_logbook bukan milestone transisi aktif terakhir; Refresh status Undo');
+    }
+    $points=$this->calculateMorbiditasSessionPoints($db,$user,$client,(int)$open['id_semester'],$open['started_at']);
+    $names=$db->createCommand('SELECT sem.name AS semester_name,st.name AS stase_name,sem.id_stage,stage.name AS stage_name
+        FROM m_semester sem LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client
+        LEFT JOIN m_stage stage ON stage.id=sem.id_stage WHERE sem.id=:semester AND sem.id_client=:client')
+        ->bindValues(array(':semester'=>(int)$restore['id_semester'],':stase'=>$restore['id_stase'],':client'=>$client))->queryRow();
+    if (!$names || ($restore['id_stase']!==null && $names['stase_name']===null)) throw new RuntimeException('Master semester/Stase pemulihan tidak ditemukan untuk client ini');
+    $currentName=$db->createCommand('SELECT name FROM m_semester WHERE id=:id AND id_client=:client')
+        ->bindValues(array(':id'=>(int)$open['id_semester'],':client'=>$client))->queryScalar();
+    $currentStaseName=$db->createCommand('SELECT name FROM m_stase WHERE id=:id AND id_client=:client')
+        ->bindValues(array(':id'=>$open['id_stase'],':client'=>$client))->queryScalar();
+    $info=array('id_user'=>$user,'display_name'=>$ppds['display_name'],'can_undo'=>$points===0,
+        'reason'=>$points===0?null:'Undo dikunci: sesi sekarang sudah memiliki poin aktif.',
+        'current_session_id'=>(int)$open['id'],'current_semester_id'=>(int)$open['id_semester'],
+        'current_semester_name'=>$currentName,'current_stase_name'=>$currentStaseName,'current_active_points'=>$points,
+        'archive_semester_name'=>$currentName,'archive_stase_name'=>$currentStaseName,
+        'archive_logbook_id'=>(int)$target['id'],'archive_semester_id'=>(int)$target['id_semester'],
+        'archive_stase_id'=>$target['id_stase']!==null?(int)$target['id_stase']:null,
+        'archive_created_date'=>$target['created_date'],'archive_activity_date'=>$target['date'],
+        'will_archive_transition'=>true,'restore_session_id'=>(int)$restore['id'],
+        'restore_semester_id'=>(int)$restore['id_semester'],'restore_semester_name'=>$names['semester_name'],
+        'restore_stase_id'=>$restore['id_stase']!==null?(int)$restore['id_stase']:null,'restore_stase_name'=>$names['stase_name'],
+        'restore_stage_id'=>$names['id_stage'],'restore_stage_name'=>$names['stage_name'],
+        // Zero, including an epoch bootstrap, is an authoritative saved snapshot.
+        'restore_points'=>(int)$restore['points']);
+    return array('open'=>$open,'restore'=>$restore,'target'=>$target,'info'=>$info);
 }
+
+/* Current bound sum captured at restore; later verification changes remain a delta, not a new baseline. */
+private function morbiditasSemesterUndoBoundPoints($db, $user, $client, $session)
+{
+    return (int)$db->createCommand("SELECT COALESCE(SUM(category.points),0)::int FROM t_logbook lb
+        JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+        JOIN m_action_category category ON category.id=lb.id_category
+        WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_morbiditas_period=:session
+          AND lb.deleted_at IS NULL
+          AND (lb.verified IS TRUE OR lower(coalesce(lb.verified_status,''))='verified')
+          AND (lower(coalesce(a.identifier,''))='morbiditas' OR lower(coalesce(a.name,''))='morbiditas' OR a.id=39)")
+        ->bindValues(array(':user'=>(int)$user,':client'=>(int)$client,':session'=>(int)$session))->queryScalar();
+}
+
+
+
+
 
 
 
@@ -922,6 +977,16 @@ public function actionGetLogbook()
             $where[] = 'EXISTS (SELECT 1 FROM t_logbook_status tls_filter WHERE tls_filter.id_logbook=t.id AND tls_filter.id_user=:id_staff AND tls_filter.id_client=:staff_client AND tls_filter.deleted_at IS NULL)';
             $params[':id_staff'] = (string)$post['id_staff']; $params[':staff_client'] = (string)$post['id_client'];
         }
+        // Independent AND constraint: main Staff and Jejaring may be selected together.
+        if (isset($post['id_staff_jejaring']) && $post['id_staff_jejaring'] !== '' && $post['id_staff_jejaring'] !== null) {
+            if (!is_scalar($post['id_staff_jejaring']) || is_bool($post['id_staff_jejaring']) || !preg_match('/^[1-9][0-9]*$/', (string)$post['id_staff_jejaring'])) throw new RuntimeException('pengajar jejaring tidak valid');
+            $jejaring = $db->createCommand("SELECT u.id FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL AND u.is_show=true AND u.status='Active' AND LOWER(TRIM(r.name))='staff jejaring'")
+                ->bindValues(array(':id'=>(int)$post['id_staff_jejaring'], ':client'=>(int)$post['id_client']))->queryRow();
+            if (!$jejaring) throw new RuntimeException('pengajar jejaring tidak tersedia untuk client ini');
+            $where[] = 'EXISTS (SELECT 1 FROM t_logbook_status tls_jejaring_filter WHERE tls_jejaring_filter.id_logbook=t.id AND tls_jejaring_filter.id_user=:id_staff_jejaring AND tls_jejaring_filter.id_client=:jejaring_client AND tls_jejaring_filter.deleted_at IS NULL)';
+            $params[':id_staff_jejaring'] = (string)$post['id_staff_jejaring'];
+            $params[':jejaring_client'] = (string)$post['id_client'];
+        }
         if (array_key_exists('is_presentation', $post)) {
             $rawPresentation = $post['is_presentation'];
             if (in_array($rawPresentation, array(true, 1, '1', 'true', 't'), true)) $presentation = 'true';
@@ -991,6 +1056,7 @@ public function actionGetLogbook()
     }
     Yii::app()->end();
 }
+
   
 
 
@@ -1520,7 +1586,7 @@ public function actionGetTodo()
                     mh.name AS _mh_name
                 FROM t_logbook lb
                 LEFT JOIN m_user u ON lb.id_user = u.id
-                LEFT JOIN m_semester s ON u.id_semester = s.id
+                LEFT JOIN m_semester s ON lb.id_semester = s.id
                 LEFT JOIN m_stage st ON s.id_stage = st.id
                 LEFT JOIN m_action ma ON lb.id_action = ma.id
                 LEFT JOIN m_action_type mat ON ma.id_type = mat.id
@@ -2057,6 +2123,15 @@ public function actionArchiveMilestone()
             ->bindValues(array(':id' => $actorId, ':client' => $clientId))->queryRow();
         if (!$actor) throw new RuntimeException('Aktor tidak berhak menghapus Stase');
 
+        $owner=$db->createCommand('SELECT id_user FROM t_logbook WHERE id=:id AND id_client=:client AND deleted_at IS NULL')
+            ->bindValues(array(':id'=>$id,':client'=>$clientId))->queryRow();
+        if (!$owner) throw new RuntimeException('Milestone Stase tidak ditemukan');
+        $locked=$db->createCommand('SELECT id FROM m_user WHERE id=:user AND id_client=:client AND deleted_at IS NULL FOR UPDATE')
+            ->bindValues(array(':user'=>(int)$owner['id_user'],':client'=>$clientId))->queryRow();
+        if (!$locked) throw new RuntimeException('PPDS tidak ditemukan');
+        $linked=$db->createCommand('SELECT id FROM t_morbiditas_points_history WHERE transition_logbook_id=:id AND id_user=:user AND id_client=:client LIMIT 1')
+            ->bindValues(array(':id'=>$id,':user'=>(int)$owner['id_user'],':client'=>$clientId))->queryRow();
+        if ($linked) throw new RuntimeException('Milestone pembentuk sesi tidak boleh dihapus terpisah; gunakan Undo semester');
         $milestone = $db->createCommand("SELECT lb.id FROM t_logbook lb
             JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
             WHERE lb.id=:id AND lb.id_client=:client AND lb.deleted_at IS NULL
@@ -2066,14 +2141,15 @@ public function actionArchiveMilestone()
             ->bindValues(array(':id' => $id, ':client' => $clientId))->queryRow();
         if (!$milestone) throw new RuntimeException('Milestone Stase tidak ditemukan');
 
-        $db->createCommand()->update('t_logbook', array(
+        $archived=$db->createCommand()->update('t_logbook', array(
             'deleted_at' => date('Y-m-d H:i:s'),
             'updated_by' => $actorId,
             'updated_date' => date('Y-m-d H:i:s'),
         ), 'id=:id AND id_client=:client AND deleted_at IS NULL', array(':id' => $id, ':client' => $clientId));
+        if ($archived!==1) throw new RuntimeException('Milestone berubah; arsip dibatalkan');
         $transaction->commit();
         echo json_encode(array('success' => true, 'message' => 'Milestone Stase berhasil diarsipkan', 'data' => array('id' => $id)));
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         if ($transaction->active) $transaction->rollback();
         echo json_encode(array('success' => false, 'message' => $e->getMessage()));
     }
@@ -2162,7 +2238,7 @@ public function actionArchiveMilestone()
 
         $ppds = $db->createCommand("SELECT u.id, u.id_semester, u.id_stase FROM m_user u JOIN m_role r ON r.id=u.id_role
             WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL
-              AND u.status='Active' AND u.is_show=true AND r.name='ppds' FOR UPDATE")
+              AND u.status='Active' AND u.is_show=true AND r.name='ppds' FOR UPDATE OF u")
             ->bindValues(array(':id' => $ppdsId, ':client' => $clientId))->queryRow();
         if (!$ppds) throw new RuntimeException('User PPDS tidak ditemukan untuk client ini');
 
@@ -2182,10 +2258,14 @@ public function actionArchiveMilestone()
 
         $now = date('Y-m-d H:i:s');
         $id = isset($post['id']) && preg_match('/^[1-9][0-9]*$/', (string)$post['id']) ? (int)$post['id'] : null;
+        $isEdit = $id !== null;
         if ($id) {
-            $existing = $db->createCommand('SELECT id FROM t_logbook WHERE id=:id AND id_client=:client AND id_action=:action AND deleted_at IS NULL FOR UPDATE')
+            $existing = $db->createCommand('SELECT id,id_user,id_stase,id_semester FROM t_logbook WHERE id=:id AND id_client=:client AND id_action=:action AND deleted_at IS NULL FOR UPDATE')
                 ->bindValues(array(':id' => $id, ':client' => $clientId, ':action' => (int)$action['id']))->queryRow();
             if (!$existing) throw new RuntimeException('Milestone Stase tidak ditemukan');
+            if ((int)$existing['id_user']!==$ppdsId || (int)$existing['id_stase']!==$staseId || (int)$existing['id_semester']!==$semesterId) {
+                throw new RuntimeException('Edit tidak boleh mengubah PPDS, semester, atau Stase historis; buat transisi baru atau gunakan Undo');
+            }
             // Bind boolean explicitly: Yii's array insert/update can serialize false as
             // an empty string, which PostgreSQL rejects for a boolean column.
             $command = $db->createCommand('UPDATE t_logbook SET
@@ -2204,7 +2284,8 @@ public function actionArchiveMilestone()
             $command->bindValue(':updated_date', $now, PDO::PARAM_STR);
             $command->bindValue(':id', $id, PDO::PARAM_INT);
             $command->bindValue(':client', $clientId, PDO::PARAM_INT);
-            $command->execute();
+            $changed=$command->execute();
+            if ($changed!==1) throw new RuntimeException('Milestone berubah; edit dibatalkan');
         } else {
             // `PDO::PARAM_BOOL` is required here; raw false became '' in the deployed
             // Yii insert path and caused SQLSTATE[22P02].
@@ -2230,24 +2311,27 @@ public function actionArchiveMilestone()
 
         // Perubahan semester adalah sesi baru, baik naik maupun turun yang disengaja.
         // Snapshot poin sesi lama tetap tersimpan; sesi target selalu dimulai dari 0.
-        if ((int)$ppds['id_semester'] !== $semesterId) {
+        if (!$isEdit && (int)$ppds['id_semester'] !== $semesterId) {
             $this->transitionMorbiditasPointsSession(
                 $db, $ppdsId, $clientId, (int)$ppds['id_semester'],
                 $ppds['id_stase'] !== null ? (int)$ppds['id_stase'] : null,
-                $semesterId, $staseId
+                $semesterId, $staseId, $id
             );
         }
 
-        $db->createCommand()->update('m_user', array(
+        if (!$isEdit) {
+        $updatedProfile=$db->createCommand()->update('m_user', array(
             'id_stase' => $staseId, 'id_semester' => $semesterId,
             'updated_by' => $actorId, 'updated_date' => $now,
         ), 'id=:id AND id_client=:client', array(':id' => $ppdsId, ':client' => $clientId));
+        if ($updatedProfile!==1) throw new RuntimeException('Profil PPDS tidak tersimpan');
+        }
 
         $row = $db->createCommand('SELECT * FROM t_logbook WHERE id=:id AND id_client=:client')
             ->bindValues(array(':id' => $id, ':client' => $clientId))->queryRow();
         $transaction->commit();
         echo json_encode(array('success' => true, 'message' => isset($post['id']) ? 'Milestone Stase berhasil diperbarui' : 'Milestone Stase berhasil dibuat', 'data' => $row));
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         if ($transaction->active) $transaction->rollback();
         echo json_encode(array('success' => false, 'message' => $e->getMessage()));
     }
@@ -2890,7 +2974,7 @@ public function actionGetListExplorePpds()
 }
 
     
-    public function actionGetLogbookIdCustomer() {
+        public function actionGetLogbookIdCustomer() {
     header('Content-Type: application/json');
     $rest_json = file_get_contents("php://input");
     $post = json_decode($rest_json, true);
@@ -2939,6 +3023,7 @@ public function actionGetListExplorePpds()
                 t.id_action,
                 t.created_by,
                 t.verified,
+                t.verified_status,
                 t.exam_result,
                 t.location,
                 t.date,
@@ -2969,6 +3054,7 @@ public function actionGetListExplorePpds()
                 'id_action' => $row['id_action'],
                 'created_by' => $row['created_by'],
                 'verified' => $row['verified'],
+                'verified_status' => $row['verified_status'],
                 'exam_result' => $row['exam_result'],
                 'location' => $row['location'],
                 'date' => $row['date'],
@@ -2993,6 +3079,7 @@ public function actionGetListExplorePpds()
 
     Yii::app()->end();
 }
+
     
     
     
@@ -3590,7 +3677,7 @@ private function ensureMorbiditasPointsSessionTable($db)
 private function calculateMorbiditasSessionPoints($db, $idUser, $idClient, $idSemester, $startedAt)
 {
     // Cari sesi aktif untuk user ini
-    $activeSession = $db->createCommand('SELECT id, points, restored_at
+    $activeSession = $db->createCommand('SELECT id, points, restored_at, restored_after_logbook_id, restored_bound_points
         FROM t_morbiditas_points_history
         WHERE id_user=:user AND id_client=:client AND id_semester=:semester
           AND ended_at IS NULL ORDER BY id DESC LIMIT 1')
@@ -3603,18 +3690,35 @@ private function calculateMorbiditasSessionPoints($db, $idUser, $idClient, $idSe
     }
 
     $sessionId = (int)$activeSession['id'];
+    if ($activeSession['restored_after_logbook_id'] !== null) {
+        // Snapshot remains authoritative (also zero); current bound SUM minus its
+        // restore-time SUM preserves later verification changes to old pending rows.
+        $boundDelta=$this->morbiditasSemesterUndoBoundPoints($db,$idUser,$idClient,$sessionId)
+            -(int)$activeSession['restored_bound_points'];
+        // Only newly inserted unbound legacy rows use the ID watermark.
+        $delta=$db->createCommand("SELECT COALESCE(SUM(category.points),0)::int FROM t_logbook lb
+            JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+            JOIN m_action_category category ON category.id=lb.id_category
+            WHERE lb.id_user=:user AND lb.id_client=:client AND lb.deleted_at IS NULL
+              AND lb.id>:watermark AND lb.id_morbiditas_period IS NULL AND lb.id_semester=:semester
+              AND (lb.verified IS TRUE OR lower(coalesce(lb.verified_status,''))='verified')
+              AND (lower(coalesce(a.identifier,''))='morbiditas' OR lower(coalesce(a.name,''))='morbiditas' OR a.id=39)")
+            ->bindValues(array(':user'=>(int)$idUser,':client'=>(int)$idClient,':watermark'=>(int)$activeSession['restored_after_logbook_id'],
+                ':semester'=>(int)$idSemester))->queryScalar();
+        return (int)$activeSession['points']+$boundDelta+(int)$delta;
+    }
 
     // Hitung poin hanya dari Morbiditas yang terikat ke sesi ini
     $bound = $db->createCommand("SELECT COALESCE(SUM(category.points), 0)::int AS total
         FROM t_logbook lb
         INNER JOIN m_action action ON action.id=lb.id_action AND action.id_client=lb.id_client
         INNER JOIN m_action_category category ON category.id=lb.id_category
-        WHERE lb.id_morbiditas_period=:session_id
+        WHERE lb.id_morbiditas_period=:session_id AND lb.id_user=:user AND lb.id_client=:client
           AND lb.deleted_at IS NULL AND category.points IS NOT NULL
           AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, ''))='verified')
           AND (LOWER(COALESCE(action.identifier, ''))='morbiditas'
                OR LOWER(COALESCE(action.name, ''))='morbiditas' OR action.id=39)")
-        ->bindValue(':session_id', $sessionId)->queryRow();
+        ->bindValues(array(':session_id'=>$sessionId,':user'=>(int)$idUser,':client'=>(int)$idClient))->queryRow();
 
     $boundPoints = (int)($bound['total'] ?? 0);
 
@@ -3710,145 +3814,122 @@ private function reconcileLegacyMorbiditasSessionSnapshot($db, $idUser, $idClien
 }
 
 /* Deliberate Stase Save: close old session and always open a new target session at 0. */
-private function transitionMorbiditasPointsSession($db, $idUser, $idClient, $oldSemester, $oldStase, $newSemester, $newStase)
+private function transitionMorbiditasPointsSession($db, $idUser, $idClient, $oldSemester, $oldStase, $newSemester, $newStase, $milestoneId)
 {
-    $this->ensureMorbiditasPointsSessionTable($db);
-    $open = $db->createCommand('SELECT id, id_semester, id_stase, started_at
-        FROM t_morbiditas_points_history
-        WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
-        ORDER BY id DESC LIMIT 1 FOR UPDATE')
-        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient))->queryRow();
-
-    if (!$open && $oldSemester > 0) {
-        $db->createCommand('INSERT INTO t_morbiditas_points_history
-            (id_user,id_client,id_semester,id_stase,points,started_at,ended_at)
-            VALUES (:user,:client,:semester,:stase,0,\'1970-01-01 00:00:00+00\',NULL)')
-            ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient,
-                ':semester'=>(int)$oldSemester, ':stase'=>$oldStase))->execute();
-        $open = $db->createCommand('SELECT id, id_semester, id_stase, started_at
-            FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client
-              AND ended_at IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE')
-            ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient))->queryRow();
+    if ((int)$oldSemester===(int)$newSemester) return;
+    $scope=array(':user'=>(int)$idUser,':client'=>(int)$idClient);
+    $rows=$db->createCommand('SELECT * FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client AND ended_at IS NULL FOR UPDATE')
+        ->bindValues($scope)->queryAll();
+    if (count($rows)>1) throw new RuntimeException('Riwayat memiliki lebih dari satu sesi aktif; transisi dibatalkan');
+    $open=count($rows)?$rows[0]:null;
+    if (!$open && (int)$oldSemester>0) {
+        $open=$db->createCommand("INSERT INTO t_morbiditas_points_history
+            (id_user,id_client,id_semester,id_stase,points,started_at) VALUES (:user,:client,:semester,:stase,0,'1970-01-01 00:00:00+00') RETURNING *")
+            ->bindValues($scope+array(':semester'=>(int)$oldSemester,':stase'=>$oldStase))->queryRow();
     }
-
     if ($open) {
-        $snapshot = $this->reconcileLegacyMorbiditasSessionSnapshot($db, $idUser, $idClient, $open);
-        $db->createCommand('UPDATE t_morbiditas_points_history
-            SET points=:points, started_at=:started_at, id_stase=COALESCE(:stase,id_stase), restored_at=NULL, ended_at=CURRENT_TIMESTAMP
-            WHERE id=:id AND ended_at IS NULL')
-            ->bindValues(array(':points'=>(int)$snapshot['points'], ':started_at'=>$snapshot['started_at'],
-                ':stase'=>$oldStase, ':id'=>(int)$open['id']))->execute();
+        if ((int)$open['id_semester']!==(int)$oldSemester) throw new RuntimeException('Semester profil tidak cocok dengan sesi aktif');
+        $points=$this->calculateMorbiditasSessionPoints($db,$idUser,$idClient,(int)$oldSemester,$open['started_at']);
+        $changed=$db->createCommand('UPDATE t_morbiditas_points_history SET points=:points,id_stase=:stase,ended_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at IS NULL')
+            ->bindValues($scope+array(':points'=>$points,':stase'=>$oldStase,':id'=>(int)$open['id']))->execute();
+        if ($changed!==1) throw new RuntimeException('Sesi lama berubah; transisi dibatalkan');
     }
-    $db->createCommand('UPDATE t_morbiditas_points_history SET ended_at=CURRENT_TIMESTAMP
-        WHERE id_user=:user AND id_client=:client AND ended_at IS NULL')
-        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient))->execute();
-    $db->createCommand('INSERT INTO t_morbiditas_points_history
-        (id_user,id_client,id_semester,id_stase,points,started_at,ended_at)
-        VALUES (:user,:client,:semester,:stase,0,CURRENT_TIMESTAMP,NULL)')
-        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient,
-            ':semester'=>(int)$newSemester, ':stase'=>$newStase))->execute();
+    $new=$db->createCommand('INSERT INTO t_morbiditas_points_history
+        (id_user,id_client,id_semester,id_stase,points,started_at,transition_logbook_id,previous_session_id)
+        VALUES (:user,:client,:semester,:stase,0,CURRENT_TIMESTAMP,:milestone,:previous) RETURNING id')
+        ->bindValues($scope+array(':semester'=>(int)$newSemester,':stase'=>$newStase,':milestone'=>(int)$milestoneId,
+            ':previous'=>$open?(int)$open['id']:null))->queryRow();
+    if (!$new) throw new RuntimeException('Sesi baru tidak tersimpan');
 }
 
 
 
+/* REPLACE existing method, never append a duplicate. Preview performs no repairs or DDL. */
 public function actionGetMilestoneMorbiditasUndoInfo()
 {
     header('Content-Type: application/json; charset=utf-8');
     $post=json_decode(file_get_contents('php://input'),true);
-    foreach(array('created_by','id_client','id_user') as $field) if(!is_array($post)||!isset($post[$field])||!preg_match('/^[1-9][0-9]*$/',(string)$post[$field])) { echo json_encode(array('success'=>false,'message'=>$field.' wajib berupa ID positif')); Yii::app()->end(); }
-    $db=Yii::app()->dbPrasi; $client=(int)$post['id_client']; $actor=(int)$post['created_by']; $user=(int)$post['id_user'];
+    $db=Yii::app()->dbPrasi; $tx=null;
     try {
-        $allowed=$db->createCommand("SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role WHERE u.id=:actor AND u.id_client=:client AND u.deleted_at IS NULL AND u.status='Active' AND u.is_show=true AND lower(r.name) IN ('staff','staff jejaring','institution','institution-admin')")
-            ->bindValues(array(':actor'=>$actor,':client'=>$client))->queryRow();
-        if(!$allowed) throw new RuntimeException('Aktor tidak berhak melihat Undo Morbiditas');
-        $ppds=$db->createCommand("SELECT u.id,u.display_name,u.id_semester,u.id_stase FROM m_user u JOIN m_role r ON r.id=u.id_role WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL AND r.name='ppds'")
-            ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
-        if(!$ppds) throw new RuntimeException('PPDS tidak ditemukan untuk client ini');
-        $this->ensureMorbiditasPointsSessionTable($db);
-        $open=$db->createCommand('SELECT id,id_semester,id_stase,points,started_at FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client AND ended_at IS NULL ORDER BY id DESC LIMIT 1')
-            ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
-        if(!$open) { echo json_encode(array('success'=>true,'data'=>array('id_user'=>$user,'display_name'=>$ppds['display_name'],'can_undo'=>false,'reason'=>'Belum ada sesi poin aktif'))); Yii::app()->end(); }
-        $currentPoints=$this->calculateMorbiditasSessionPoints($db,$user,$client,(int)$open['id_semester'],$open['started_at']);
-        $closed=$db->createCommand('SELECT id,id_semester,id_stase,points,started_at,ended_at FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client AND ended_at IS NOT NULL ORDER BY ended_at DESC,id DESC LIMIT 1')
-            ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
-        $currentName=$db->createCommand('SELECT name FROM m_semester WHERE id=:id AND id_client=:client')->bindValues(array(':id'=>(int)$open['id_semester'],':client'=>$client))->queryScalar();
-        $base=array('id_user'=>$user,'display_name'=>$ppds['display_name'],'current_semester_id'=>(int)$open['id_semester'],'current_semester_name'=>$currentName,'current_active_points'=>$currentPoints,'can_undo'=>false);
-        if(!$closed) { echo json_encode(array('success'=>true,'data'=>$base+array('reason'=>'Belum ada riwayat ganti semester'))); Yii::app()->end(); }
-        /* A closed session's points are a historical snapshot. Never recalculate
-         * a positive snapshot against a later Milestone boundary in preview. */
-        if ((int)$closed['points'] > 0) {
-            $restoreSnapshot=array('points'=>(int)$closed['points'],'started_at'=>$closed['started_at']);
-            $legacySnapshotReconciled=false;
-        } else {
-            // Repair only an old zero-valued bootstrap session.
-            $restoreSnapshot=$this->reconcileLegacyMorbiditasSessionSnapshot($db,$user,$client,$closed);
-            $legacySnapshotReconciled=(string)$restoreSnapshot['started_at'] !== (string)$closed['started_at'];
-            if ($legacySnapshotReconciled || (int)$restoreSnapshot['points'] !== (int)$closed['points']) {
-                $db->createCommand('UPDATE t_morbiditas_points_history SET points=:points,started_at=:started_at WHERE id=:id AND id_user=:user AND id_client=:client')
-                    ->bindValues(array(':points'=>(int)$restoreSnapshot['points'],':started_at'=>$restoreSnapshot['started_at'],':id'=>(int)$closed['id'],':user'=>$user,':client'=>$client))->execute();
-                $closed['points']=(int)$restoreSnapshot['points']; $closed['started_at']=$restoreSnapshot['started_at'];
-            }
-        }
-        $restorePoints=(int)$restoreSnapshot['points'];
-        $restore=$db->createCommand('SELECT sem.name AS semester_name,st.name AS stase_name,sem.id_stage,stage.name AS stage_name FROM m_semester sem LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client LEFT JOIN m_stage stage ON stage.id=sem.id_stage WHERE sem.id=:semester AND sem.id_client=:client')
-            ->bindValues(array(':semester'=>(int)$closed['id_semester'],':stase'=>$closed['id_stase'],':client'=>$client))->queryRow();
-        $canUndo=$currentPoints===0 && ($legacySnapshotReconciled || strtotime((string)$closed['started_at'])>strtotime('1971-01-01'));
-        echo json_encode(array('success'=>true,'data'=>array_merge($base,array('can_undo'=>$canUndo,'reason'=>$canUndo?null:($currentPoints!==0?'Undo dikunci: sesi sekarang sudah memiliki poin aktif.':'Riwayat sebelumnya adalah bootstrap dan tidak aman untuk Undo.'),'restore_session_id'=>(int)$closed['id'],'restore_semester_id'=>(int)$closed['id_semester'],'restore_semester_name'=>$restore['semester_name']??null,'restore_stase_id'=>$closed['id_stase']!==null?(int)$closed['id_stase']:null,'restore_stase_name'=>$restore['stase_name']??null,'restore_stage_id'=>$restore['id_stage']??null,'restore_stage_name'=>$restore['stage_name']??null,'restore_points'=>$restorePoints?:((int)$closed['points'])))));
-    } catch(Exception $e) { echo json_encode(array('success'=>false,'message'=>$e->getMessage())); }
+        $tx=$db->beginTransaction();
+        $context=$this->morbiditasSemesterUndoContext($db,$post);
+        $tx->commit();
+        echo json_encode(array('success'=>true,'data'=>$context['info']));
+    } catch (Throwable $e) {
+        if ($tx!==null && $tx->active) $tx->rollback();
+        echo json_encode(array('success'=>false,'message'=>$e->getMessage()));
+    }
     Yii::app()->end();
 }
+
 
 
 /* Add this new method inside ApiMobileServiceController.
  * Route: apiMobileService/undoMilestoneMorbiditasSemester
  */
+/* REPLACE existing method. Cancels ONLY a linked semester-change milestone. */
 public function actionUndoMilestoneMorbiditasSemester()
 {
     header('Content-Type: application/json; charset=utf-8');
     $post=json_decode(file_get_contents('php://input'),true);
-    foreach(array('created_by','id_client','id_user') as $field) if(!is_array($post)||!isset($post[$field])||!preg_match('/^[1-9][0-9]*$/',(string)$post[$field])) { echo json_encode(array('success'=>false,'message'=>$field.' wajib berupa ID positif')); Yii::app()->end(); }
-    if(isset($post['id_logbook'])&&!preg_match('/^[1-9][0-9]*$/',(string)$post['id_logbook'])) { echo json_encode(array('success'=>false,'message'=>'id_logbook tidak valid')); Yii::app()->end(); }
-    $db=Yii::app()->dbPrasi; $client=(int)$post['id_client']; $actor=(int)$post['created_by']; $user=(int)$post['id_user']; $targetLogbook=isset($post['id_logbook'])?(int)$post['id_logbook']:null;
-    $tx=$db->beginTransaction();
+    $db=Yii::app()->dbPrasi; $tx=null;
     try {
-        $allowed=$db->createCommand("SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role WHERE u.id=:actor AND u.id_client=:client AND u.deleted_at IS NULL AND u.status='Active' AND u.is_show=true AND lower(r.name) IN ('staff','staff jejaring','institution','institution-admin')")
-            ->bindValues(array(':actor'=>$actor,':client'=>$client))->queryRow();
-        if(!$allowed) throw new RuntimeException('Aktor tidak berhak menjalankan Undo Morbiditas');
-        $this->ensureMorbiditasPointsSessionTable($db);
-        $open=$db->createCommand('SELECT id,id_semester,id_stase,started_at FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client AND ended_at IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE')
-            ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
-        if(!$open) throw new RuntimeException('Tidak ada sesi aktif untuk di-Undo');
-        $currentPoints=$this->calculateMorbiditasSessionPoints($db,$user,$client,(int)$open['id_semester'],$open['started_at']);
-        if($currentPoints!==0) throw new RuntimeException('Undo ditolak: sesi sekarang sudah memiliki poin aktif');
-        $restore=$db->createCommand('SELECT id,id_semester,id_stase,points,started_at FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client AND ended_at IS NOT NULL ORDER BY ended_at DESC,id DESC LIMIT 1 FOR UPDATE')
-            ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
-        if(!$restore || (strtotime((string)$restore['started_at'])<=strtotime('1971-01-01') && (int)$restore['points']===0)) throw new RuntimeException('Tidak ada sesi sebelumnya yang aman untuk di-Undo');
-        $restoreStase=$restore['id_stase']!==null?(int)$restore['id_stase']:null;
-        if(!$restoreStase) {
-            $restoreStase=$db->createCommand("SELECT lb.id_stase FROM t_logbook lb JOIN m_action a ON a.id=lb.id_action WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_semester=:semester AND lb.deleted_at IS NULL AND lb.id_stase IS NOT NULL AND (lower(coalesce(a.identifier,''))='stase' OR lower(coalesce(a.name,''))='stase') ORDER BY lb.id DESC LIMIT 1")
-                ->bindValues(array(':user'=>$user,':client'=>$client,':semester'=>(int)$restore['id_semester']))->queryScalar();
-            $restoreStase=$restoreStase!==false&&$restoreStase!==null?(int)$restoreStase:null;
+        foreach (array('expected_current_session_id','expected_restore_session_id','id_logbook') as $field) {
+            if (!is_array($post) || !isset($post[$field]) || !is_scalar($post[$field])
+                || !preg_match('/^[1-9][0-9]*$/',(string)$post[$field])) {
+                throw new RuntimeException($field.' wajib dari preview terbaru; Refresh status Undo');
+            }
         }
-        $db->createCommand('UPDATE t_morbiditas_points_history SET points=0,ended_at=CURRENT_TIMESTAMP WHERE id=:id AND ended_at IS NULL')->bindValue(':id',(int)$open['id'])->execute();
-        /* Reopen the closed session with its saved point snapshot as baseline.
-         * Do not recalculate it against a later Stase boundary: this explicit
-         * Undo is the only operation that may restore historic points. */
-        $db->createCommand('UPDATE t_morbiditas_points_history SET ended_at=NULL,restored_at=CURRENT_TIMESTAMP WHERE id=:id AND ended_at IS NOT NULL')->bindValue(':id',(int)$restore['id'])->execute();
-        $now=date('Y-m-d H:i:s');
-        $db->createCommand()->update('m_user',array('id_semester'=>(int)$restore['id_semester'],'id_stase'=>$restoreStase,'updated_by'=>$actor,'updated_date'=>$now),'id=:id AND id_client=:client',array(':id'=>$user,':client'=>$client));
-        if($targetLogbook) {
-            $staseAction=$db->createCommand("SELECT id FROM m_action WHERE id_client=:client AND is_milestone=true AND show_on_milestone=true AND (lower(identifier)='stase' OR lower(name)='stase') LIMIT 1")->bindValue(':client',$client)->queryScalar();
-            $updated=$db->createCommand()->update('t_logbook',array('id_semester'=>(int)$restore['id_semester'],'id_stase'=>$restoreStase,'updated_by'=>$actor,'updated_date'=>$now),'id=:id AND id_user=:user AND id_client=:client AND id_action=:action AND deleted_at IS NULL',array(':id'=>$targetLogbook,':user'=>$user,':client'=>$client,':action'=>$staseAction));
-            if(!$updated) throw new RuntimeException('Baris Stase yang akan di-Undo tidak ditemukan');
+        $tx=$db->beginTransaction();
+        $context=$this->morbiditasSemesterUndoContext($db,$post,true);
+        $open=$context['open']; $restore=$context['restore']; $info=$context['info'];
+        if ((int)$post['expected_current_session_id']!==(int)$open['id']
+            || (int)$post['expected_restore_session_id']!==(int)$restore['id']) {
+            throw new RuntimeException('Sesi sudah berubah sejak preview; Refresh status Undo');
         }
-        $active=$this->calculateMorbiditasSessionPoints($db,$user,$client,(int)$restore['id_semester'],$restore['started_at']);
-        $names=$db->createCommand('SELECT sem.name AS semester_name,st.name AS stase_name,sem.id_stage,stage.name AS stage_name FROM m_semester sem LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client LEFT JOIN m_stage stage ON stage.id=sem.id_stage WHERE sem.id=:semester AND sem.id_client=:client')
-            ->bindValues(array(':semester'=>(int)$restore['id_semester'],':stase'=>$restoreStase,':client'=>$client))->queryRow();
+        if (!$info['can_undo']) throw new RuntimeException($info['reason']);
+        $scope=array(':user'=>(int)$post['id_user'],':client'=>(int)$post['id_client']);
+        $changed=$db->createCommand('UPDATE t_morbiditas_points_history SET points=0,ended_at=CURRENT_TIMESTAMP,undone_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at IS NULL AND undone_at IS NULL')
+            ->bindValues($scope+array(':id'=>(int)$open['id']))->execute();
+        if ($changed!==1) throw new RuntimeException('Sesi aktif berubah; Undo dibatalkan');
+        $boundAtRestore=$this->morbiditasSemesterUndoBoundPoints($db,(int)$post['id_user'],(int)$post['id_client'],(int)$restore['id']);
+        $changed=$db->createCommand('UPDATE t_morbiditas_points_history SET ended_at=NULL,restored_at=CURRENT_TIMESTAMP,
+            restored_after_logbook_id=(SELECT COALESCE(MAX(id),0) FROM t_logbook),restored_bound_points=:bound
+            WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at IS NOT NULL AND undone_at IS NULL')
+            ->bindValues($scope+array(':id'=>(int)$restore['id'],':bound'=>$boundAtRestore))->execute();
+        if ($changed!==1) throw new RuntimeException('Sesi pemulihan berubah; Undo dibatalkan');
+        $changed=$db->createCommand('UPDATE m_user SET id_semester=:semester,id_stase=:stase,updated_by=:actor,updated_date=CURRENT_TIMESTAMP
+            WHERE id=:user AND id_client=:client AND id_semester=:current_semester AND id_stase IS NOT DISTINCT FROM :current_stase AND deleted_at IS NULL')
+            ->bindValues($scope+array(':semester'=>(int)$restore['id_semester'],':stase'=>$restore['id_stase'],':actor'=>(int)$post['created_by'],
+                ':current_semester'=>(int)$open['id_semester'],':current_stase'=>$open['id_stase']))->execute();
+        if ($changed!==1) throw new RuntimeException('Profil PPDS berubah; Undo dibatalkan');
+        $changed=$db->createCommand('UPDATE t_logbook SET deleted_at=CURRENT_TIMESTAMP,updated_by=:actor,updated_date=CURRENT_TIMESTAMP
+            WHERE id=:id AND id_user=:user AND id_client=:client AND deleted_at IS NULL
+              AND id_semester=:semester AND id_stase IS NOT DISTINCT FROM :stase')
+            ->bindValues($scope+array(':id'=>$info['archive_logbook_id'],':actor'=>(int)$post['created_by'],
+                ':semester'=>(int)$open['id_semester'],':stase'=>$open['id_stase']))->execute();
+        if ($changed!==1) throw new RuntimeException('Milestone transisi berubah; Undo dibatalkan');
+        // Read back every mutated target before committing; no old card or child/activity row is touched.
+        $check=$db->createCommand('SELECT lb.deleted_at FROM t_logbook lb WHERE lb.id=:id AND lb.id_user=:user AND lb.id_client=:client')
+            ->bindValues($scope+array(':id'=>$info['archive_logbook_id']))->queryRow();
+        if (!$check || empty($check['deleted_at'])) throw new RuntimeException('Arsip transisi tidak terkonfirmasi');
+        $total=$this->calculateMorbiditasSessionPoints($db,(int)$post['id_user'],(int)$post['id_client'],(int)$restore['id_semester'],$restore['started_at']);
+        if ($total!==(int)$restore['points']) throw new RuntimeException('Snapshot pemulihan tidak konsisten; Undo dibatalkan');
         $tx->commit();
-        echo json_encode(array('success'=>true,'message'=>'Semester, Stase, dan sesi poin Morbiditas berhasil dikembalikan','data'=>array('id_user'=>$user,'id_semester'=>(int)$restore['id_semester'],'semester_name'=>$names['semester_name']??null,'id_stase'=>$restoreStase,'stase_name'=>$names['stase_name']??null,'id_stage'=>$names['id_stage']??null,'stage_name'=>$names['stage_name']??null,'total_points'=>$active)));
-    } catch(Exception $e) { if($tx->active) $tx->rollback(); echo json_encode(array('success'=>false,'message'=>$e->getMessage())); }
+        echo json_encode(array('success'=>true,'message'=>'Semester, Stase, dan sesi poin dipulihkan; milestone transisi terakhir diarsipkan.',
+            'data'=>array('id_user'=>(int)$post['id_user'],'id_semester'=>(int)$restore['id_semester'],
+                'id_stase'=>$info['restore_stase_id'],'semester_name'=>$info['restore_semester_name'],
+                'stase_name'=>$info['restore_stase_name'],'id_stage'=>$info['restore_stage_id'],'stage_name'=>$info['restore_stage_name'],
+                'total_points'=>$total,'active_session_id'=>(int)$restore['id'],'archived_logbook_id'=>$info['archive_logbook_id'])));
+    } catch (Throwable $e) {
+        if ($tx!==null && $tx->active) $tx->rollback();
+        echo json_encode(array('success'=>false,'message'=>$e->getMessage()));
+    }
     Yii::app()->end();
 }
+
 
 
 
@@ -4227,113 +4308,421 @@ public function actionPrasiUpload()
 }
 
 
-
-/* REPLACE these six existing complete methods in latest api-backend.txt.
- * ADD_SHARED_logbookUploadReceipts.php is also REQUIRED. No DB/schema changes. */
 private function logbookInspectAttachment($file)
 {
+    // Type whitelist only: not antivirus, PDF sanitization or an Office feature policy.
     $reject = function ($message) { throw new CHttpException(415, $message); };
+    clearstatcache(true, $file);
     $size = @filesize($file);
     if ($size === false || $size < 1 || $size > 50000000) throw new CHttpException(413, 'File harus 1 byte sampai 50 MB (50.000.000 byte).');
     if (!class_exists('finfo')) throw new CHttpException(503, 'Server fileinfo diperlukan.');
     $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file);
-    $bytes = file_get_contents($file);
-    if ($bytes === false || strlen($bytes) !== $size) $reject('File tidak dapat dibaca.');
+    $head = @file_get_contents($file, false, null, 0, 64);
+    if ($head === false) $reject('File tidak dapat dibaca.');
     $images = array('image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp');
     if (isset($images[$mime])) {
         $info = @getimagesize($file);
-        $magic = $mime === 'image/jpeg' ? substr($bytes,0,3) === "\xff\xd8\xff" :
-            ($mime === 'image/png' ? substr($bytes,0,8) === "\x89PNG\r\n\x1a\n" : substr($bytes,0,4)==='RIFF' && substr($bytes,8,4)==='WEBP');
-        if (!$magic || !$info || $info[0] < 1 || $info[1] < 1 || $info[0]*$info[1] > 40000000 || $info['mime'] !== $mime) $reject('Gambar tidak valid atau terlalu besar.');
+        $magic = $mime === 'image/jpeg' ? substr($head,0,3) === "\xff\xd8\xff" : ($mime === 'image/png' ? substr($head,0,8) === "\x89PNG\r\n\x1a\n" : substr($head,0,4)==='RIFF' && substr($head,8,4)==='WEBP');
+        if (!$magic || !$info || $info[0] < 1 || $info[1] < 1 || $info['mime'] !== $mime) $reject('Jenis gambar tidak valid.');
         return array('ext'=>$images[$mime],'mime'=>$mime);
     }
-    if ($mime === 'application/pdf') {
-        // Not a PDF sanitizer: viewers must remain sandboxed. Require PDF structure,
-        // reject obvious active/embedded content and trailing executable polyglots.
-        if (!preg_match('/\A%PDF-1\.[0-9][\r\n]/D',$bytes) || !preg_match('/%%EOF\s*\z/D',$bytes) ||
-            !preg_match('/\b[0-9]+\s+[0-9]+\s+obj\b/',$bytes) || strpos($bytes,'startxref') === false ||
-            preg_match('~/(?:JavaScript|JS|Launch|EmbeddedFile|RichMedia|OpenAction|AA)\b~i',$bytes)) $reject('Struktur PDF tidak valid atau berisi konten aktif.');
-        return array('ext'=>'pdf','mime'=>'application/pdf');
+    if ($mime === 'application/pdf' && preg_match('/\A%PDF-(?:1\.[0-9]|2\.0)[\r\n\x20]/D',$head)) return array('ext'=>'pdf','mime'=>'application/pdf');
+    if (substr($head,0,8) === "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") {
+        $bytes = @file_get_contents($file);
+        if ($bytes === false || strlen($bytes)!==$size) $reject('File tidak dapat dibaca.');
+        return $this->logbookLegacyOfficeTypeOnly($bytes);
     }
-    if (substr($bytes,0,8) === "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") {
-        $reject('DOC/XLS/PPT legacy OLE belum didukung secara aman; konversi ke DOCX/XLSX/PPTX tanpa macro atau PDF.');
-    }
-    // Generic ZIP MIME is normal for OOXML. Derive subtype from package content,
-    // never the request suffix or client MIME. Arbitrary archives are not allowed.
-    if (substr($bytes,0,4) !== "PK\x03\x04") $reject('Jenis file server tidak didukung.');
-    if (!class_exists('ZipArchive') || !class_exists('DOMDocument')) throw new CHttpException(503,'Server ZipArchive dan DOM diperlukan untuk Office.');
-    // Require ordinary bounded ZIP: no SFX, ZIP64, archive comment or trailing bytes.
-    $end = strrpos($bytes,"PK\x05\x06");
-    if ($end === false || $end + 22 !== $size) $reject('ZIP Office malformed atau tidak didukung.');
-    $eocd = unpack('vdisk/vstart/ventriesDisk/ventries/VcentralSize/VcentralOffset/vcomment', substr($bytes,$end+4,18));
-    if ($eocd['disk'] || $eocd['start'] || $eocd['comment'] || $eocd['entries'] < 3 || $eocd['entries'] > 512 || $eocd['entriesDisk'] !== $eocd['entries'] || $eocd['centralOffset']+$eocd['centralSize'] !== $end) $reject('ZIP Office tidak bounded.');
+    if (substr($head,0,4) !== "PK\x03\x04") $reject('Jenis file server tidak didukung.');
+    if (!class_exists('ZipArchive') || !class_exists('DOMDocument') || !class_exists('XMLReader')) throw new CHttpException(503,'Server ZipArchive, DOM dan XMLReader diperlukan untuk Office.');
     $zip = new ZipArchive();
-    if ($zip->open($file,ZipArchive::CHECKCONS) !== true) $reject('ZIP Office rusak.');
+    if ($zip->open($file,ZipArchive::CHECKCONS) !== true) $reject('Container Office tidak valid.');
     try {
-        if ($zip->numFiles !== $eocd['entries']) $reject('Jumlah ZIP tidak konsisten.');
-        $parts = array(); $total = 0;
+        // Never extract the package. Only the bounded manifest and main XML prefix
+        // are read; relationships, formulas, media, VBA and other features are not scanned.
+        if ($zip->numFiles < 2 || $zip->numFiles > 100000) $reject('Jumlah part Office di luar batas inspeksi.');
+        $seen=array();
         for ($i=0;$i<$zip->numFiles;$i++) {
-            $stat = $zip->statIndex($i);
-            $name = $stat['name'];
-            if (isset($parts[$name]) || strlen($name)>240 || !preg_match('~^[A-Za-z0-9_\[\]./-]+$~D',$name) || strpos($name,'//')!==false || substr($name,0,1)==='/' || preg_match('~(?:^|/)\.{1,2}(?:/|$)~',$name)) $reject('Path ZIP tidak aman.');
-            if (!isset($stat['encryption_method']) || $stat['encryption_method'] !== ZipArchive::EM_NONE || !in_array($stat['comp_method'],array(0,8),true)) $reject('ZIP terenkripsi/metode tidak didukung.');
-            $total += $stat['size'];
-            if ($stat['size'] > 5000000 || $total > 20000000 || $stat['size'] > max(1,$stat['comp_size'])*100) $reject('ZIP terlalu besar/rasio kompresi tidak aman.');
-            $opsys=0;$attributes=0;
-            if (!$zip->getExternalAttributesIndex($i,$opsys,$attributes) || ($opsys===3 && (($attributes>>16)&0170000)===0120000)) $reject('Symlink ZIP tidak diizinkan.');
-            if (substr($name,-1)==='/') { $parts[$name]=''; continue; }
-            $ext = strtolower(pathinfo($name,PATHINFO_EXTENSION));
-            if (!in_array($ext,array('xml','rels','png','jpg','jpeg','gif'),true) || preg_match('~(?:vba|macro|activex|embeddings|oleobject|scripts)~i',$name)) $reject('Office macro/binary/embedded tidak diizinkan.');
-            $content=$zip->getFromIndex($i,5000001);
-            if ($content===false || strlen($content)!==$stat['size'] || sprintf('%u',crc32($content))!==sprintf('%u',$stat['crc'])) $reject('Isi ZIP tidak konsisten.');
-            if ($ext==='xml' || $ext==='rels') {
-                if (strlen($content)>2000000 || strpos($content,"\0")!==false || preg_match('/<!DOCTYPE|<!ENTITY/i',$content)) $reject('XML Office tidak aman (UTF-8 tanpa DTD/entity diperlukan).');
-                $xml = new DOMDocument();
-                $xml->resolveExternals=false;
-                $xml->substituteEntities=false;
-                $previous=libxml_use_internal_errors(true);
-                $parsed=$xml->loadXML($content,LIBXML_NONET);
-                libxml_clear_errors();libxml_use_internal_errors($previous);
-                if (!$parsed || !$xml->documentElement || $xml->doctype !== null) $reject('XML Office rusak/tidak aman.');
-                if ($ext==='rels') {
-                    foreach ($xml->getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/relationships','Relationship') as $rel) {
-                        if (strcasecmp($rel->getAttribute('TargetMode'),'External')===0 || preg_match('~(?:vba|macro|oleObject|package|activeX|attachedTemplate)~i',$rel->getAttribute('Type')) || preg_match('~^(?:[a-z]+:|/|\\\\)|[\x00-\x1f]~i',$rel->getAttribute('Target'))) $reject('Relasi Office eksternal/aktif tidak diizinkan.');
+            $s=$zip->statIndex($i); if ($s===false) $reject('Direktori ZIP rusak.');
+            $name=$s['name'];
+            if ($name==='' || strlen($name)>4096 || isset($seen[$name]) || preg_match('~[\\\\\x00-\x1f]|^/|^[A-Za-z]:|(?:^|/)\.{1,2}(?:/|$)~',$name)) $reject('Path container Office tidak valid.');
+            $seen[$name]=true;
+        }
+        $readPart=function($name,$limit,$complete)use($zip,$reject){
+            $s=$zip->statName($name);
+            if ($s===false || $s['size']<1 || ($complete && $s['size']>$limit) || !isset($s['encryption_method']) || $s['encryption_method']!==ZipArchive::EM_NONE) $reject('Part pengenal Office tidak dapat diperiksa.');
+            $stream=$zip->getStream($name); if ($stream===false) $reject('Part pengenal Office tidak dapat dibaca.');
+            try {$b=stream_get_contents($stream,$limit);} finally {fclose($stream);}
+            if ($b===false || ($complete && strlen($b)!==$s['size'])) $reject('Part pengenal Office tidak lengkap.');
+            return $b;
+        };
+        $manifest=$readPart('[Content_Types].xml',2000000,true);
+        $doc=new DOMDocument();$doc->resolveExternals=false;$doc->substituteEntities=false;
+        $previous=libxml_use_internal_errors(true);
+        try {$ok=$doc->loadXML($manifest,LIBXML_NONET);} finally {libxml_clear_errors();libxml_use_internal_errors($previous);}
+        if (!$ok || $doc->doctype!==null || !$doc->documentElement || $doc->documentElement->localName!=='Types' || $doc->documentElement->namespaceURI!=='http://schemas.openxmlformats.org/package/2006/content-types') $reject('Manifest tipe Office tidak valid.');
+        $types=array(
+            'word/document.xml'=>array('docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml','application/vnd.openxmlformats-officedocument.wordprocessingml.document','document','wordprocessingml'),
+            'xl/workbook.xml'=>array('xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','workbook','spreadsheetml'),
+            'ppt/presentation.xml'=>array('pptx','application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml','application/vnd.openxmlformats-officedocument.presentationml.presentation','presentation','presentationml')
+        );
+        $main=null;$subtype=null;
+        foreach ($doc->getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/content-types','Override') as $node) {
+            $part=ltrim($node->getAttribute('PartName'),'/');
+            if (isset($types[$part])) {
+                if ($main!==null || $node->getAttribute('ContentType')!==$types[$part][1]) $reject('Subtype Office tidak didukung atau ambigu.');
+                $main=$part;$subtype=$types[$part];
+            }
+        }
+        if ($main===null) $reject('Tipe DOCX/XLSX/PPTX tidak teridentifikasi.');
+        $prefix=$readPart($main,65536,false);
+        $reader=new XMLReader();$previous=libxml_use_internal_errors(true);$root=false;
+        try {
+            if ($reader->XML($prefix,null,LIBXML_NONET)) {
+                $reader->setParserProperty(XMLReader::LOADDTD,false);$reader->setParserProperty(XMLReader::SUBST_ENTITIES,false);
+                while ($reader->read()) {
+                    if ($reader->nodeType===XMLReader::DOC_TYPE) break;
+                    if ($reader->nodeType===XMLReader::ELEMENT) {
+                        $root=$reader->localName===$subtype[3] && in_array($reader->namespaceURI,array('http://schemas.openxmlformats.org/'.$subtype[4].'/2006/main','http://purl.oclc.org/ooxml/'.$subtype[4].'/main'),true);
+                        break;
                     }
                 }
-                $parts[$name]=$xml;
-            } else {
-                $image=@getimagesizefromstring($content);
-                if (!$image || !in_array($image['mime'],array('image/png','image/jpeg','image/gif'),true) || $image[0]*$image[1]>40000000) $reject('Media Office tidak valid.');
-                $parts[$name]=true;
             }
-        }
-        if (!isset($parts['[Content_Types].xml'],$parts['_rels/.rels'])) $reject('Manifest Office tidak ditemukan.');
-        $types=array('word/document.xml'=>array('docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml','application/vnd.openxmlformats-officedocument.wordprocessingml.document','document','http://schemas.openxmlformats.org/wordprocessingml/2006/main'), 'xl/workbook.xml'=>array('xlsx','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','workbook','http://schemas.openxmlformats.org/spreadsheetml/2006/main'), 'ppt/presentation.xml'=>array('pptx','application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml','application/vnd.openxmlformats-officedocument.presentationml.presentation','presentation','http://schemas.openxmlformats.org/presentationml/2006/main'));
-        $main=null;$subtype=null;
-        foreach($parts['[Content_Types].xml']->getElementsByTagName('*') as $node) {
-            $ct=$node->getAttribute('ContentType');
-            if (preg_match('~macro|vba|oleobject|activex|executable~i',$ct) || ($ct !== '' && !preg_match('~^(?:application/vnd\.openxmlformats-[a-z0-9.+-]+|application/xml|text/xml|image/(?:png|jpeg|gif))$~D',$ct))) $reject('ContentType aktif/tidak dikenal tidak diizinkan.');
-            if ($node->localName==='Override') {
-                $part=ltrim($node->getAttribute('PartName'),'/');
-                if (!isset($parts[$part])) $reject('Part manifest tidak ditemukan.');
-                if (isset($types[$part])) {
-                    if ($main!==null || $ct!==$types[$part][1]) $reject('Subtype Office ambigu/tidak aman.');
-                    $main=$part;$subtype=$types[$part];
-                }
-            }
-        }
-        if ($main===null || !($parts[$main] instanceof DOMDocument) || $parts[$main]->documentElement->localName!==$subtype[3] || $parts[$main]->documentElement->namespaceURI!==$subtype[4]) $reject('Main Office tidak valid.');
-        $linked=0;
-        foreach($parts['_rels/.rels']->getElementsByTagNameNS('http://schemas.openxmlformats.org/package/2006/relationships','Relationship') as $rel) {
-            if ($rel->getAttribute('Type')==='http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument') {
-                if ($rel->getAttribute('Target')!==$main) $reject('Target Office tidak sesuai.');
-                $linked++;
-            }
-        }
-        if ($linked!==1) $reject('Relasi main Office tidak valid.');
+        } finally {$reader->close();libxml_clear_errors();libxml_use_internal_errors($previous);}
+        if (!$root) $reject('Main part Office tidak teridentifikasi dalam batas inspeksi.');
         return array('ext'=>$subtype[0],'mime'=>$subtype[2]);
-    } finally { $zip->close(); }
+    } finally {$zip->close();}
 }
+
+
+/* Type recognition only. Bounded CFB traversal; no macro/formula/link or unknown
+ * stream bans. No antivirus / complete Office validity guarantee. PHP 64-bit, iconv.
+ * Add these four uniquely named helpers once; replace if already present.
+ */
+private function logbookLegacyOfficeTypeOnly($bytes)
+{
+    $bad=function(){throw new CHttpException(415,'Tipe/struktur DOC/XLS/PPT tidak dapat diidentifikasi; container rusak, ambigu atau terenkripsi mungkin tidak terbaca.');};
+    if(PHP_INT_SIZE<8 || !function_exists('iconv'))throw new CHttpException(503,'Inspector Office memerlukan PHP 64-bit dan iconv.');
+    $s=$this->logbookCfbStreamsTypeOnly($bytes,$bad);
+    $word=isset($s['WordDocument']);$excel=isset($s['Workbook'])||isset($s['Book']);$ppt=isset($s['PowerPoint Document']);
+    if((int)$word+(int)$excel+(int)$ppt!==1)$bad();
+    if($word){
+        $w=$s['WordDocument'];
+        if(strlen($w)<32 || $this->logbookOfficeTypeU16($w,0)!==0xa5ec || $this->logbookOfficeTypeU16($w,2)<0x65 || $this->logbookOfficeTypeU16($w,2)>0x112)$bad();
+        // Encryption is not a content ban: subtype remains identifiable from FIB.
+        // Do not interpret encrypted text or inspect features in table/data streams.
+        $min=$this->logbookOfficeTypeU32($w,24);$max=$this->logbookOfficeTypeU32($w,28);
+        if($min<32 || $min>$max || $max>strlen($w))$bad();
+        return array('ext'=>'doc','mime'=>'application/msword');
+    }
+    if($excel){
+        if(isset($s['Workbook'],$s['Book']))$bad();
+        $b=isset($s['Workbook'])?$s['Workbook']:$s['Book'];
+        if(strlen($b)<12)$bad();
+        $id=$this->logbookOfficeTypeU16($b,0);$len=$this->logbookOfficeTypeU16($b,2);
+        if(!in_array($id,array(0x0809,0x0409,0x0209,0x0009),true) || $len<4 || $len>strlen($b)-4 || $this->logbookOfficeTypeU16($b,6)!==5)$bad();
+        if($id===0x0809 && !in_array($this->logbookOfficeTypeU16($b,4),array(0x0500,0x0600),true))$bad();
+        return array('ext'=>'xls','mime'=>'application/vnd.ms-excel');
+    }
+    $p=$s['PowerPoint Document'];
+    if(strlen($p)<8 || $this->logbookOfficeTypeU16($p,2)!==1000 || ($this->logbookOfficeTypeU16($p,0)&15)!==15 || $this->logbookOfficeTypeU32($p,4)>strlen($p)-8 || !isset($s['Current User']))$bad();
+    $cu=$s['Current User'];
+    if(strlen($cu)<28 || $this->logbookOfficeTypeU16($cu,2)!==4086 || $this->logbookOfficeTypeU32($cu,4)>strlen($cu)-8 || !in_array($this->logbookOfficeTypeU32($cu,12),array(0xe391c05f,0xf3d1c4df),true))$bad();
+    return array('ext'=>'ppt','mime'=>'application/vnd.ms-powerpoint');
+}
+private function logbookOfficeTypeU16($b,$p) { return unpack('v',substr($b,$p,2))[1]; }
+private function logbookOfficeTypeU32($b,$p) { return unpack('V',substr($b,$p,4))[1]; }
+private function logbookCfbStreamsTypeOnly($b,$bad)
+{
+    $free=0xffffffff;$end=0xfffffffe;$fatMark=0xfffffffd;$difMark=0xfffffffc;
+    $size=strlen($b);
+    if ($size<512 || $size>50000000 || substr($b,0,8)!=="\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" || substr($b,8,16)!==str_repeat("\0",16)) $bad();
+    $u16=function($p)use($b){return $this->logbookOfficeTypeU16($b,$p);};$u32=function($p)use($b){return $this->logbookOfficeTypeU32($b,$p);};
+    $major=$u16(26);$shift=$u16(30);
+    if ($u16(28)!==0xfffe || !(($major===3&&$shift===9)||($major===4&&$shift===12)) || $u16(32)!==6 || substr($b,34,6)!==str_repeat("\0",6) || $u32(56)!==4096) $bad();
+    $sector=1<<$shift;
+    if ($size%$sector!==0 || ($major===3&&$u32(40)!==0) || ($sector>512&&trim(substr($b,512,$sector-512),"\0")!=='')) $bad();
+    $n=intdiv($size,$sector)-1;$per=intdiv($sector,4);$owners=array();$fatIds=array();$difIds=array();
+    $read=function($id)use($b,$n,$sector,$bad){if($id<0||$id>=$n)$bad();return substr($b,($id+1)*$sector,$sector);};
+    $claim=function($id,$owner)use(&$owners,$n,$bad){if($id<0||$id>=$n||isset($owners[$id]))$bad();$owners[$id]=$owner;};
+    $fatCount=$u32(44);$difCount=$u32(72);
+    if ($fatCount<1 || $fatCount>intdiv($n+$per-1,$per) || $difCount>intdiv($fatCount+$per-2,$per-1) || ($difCount===0&&$u32(68)!==$end)) $bad();
+    for($i=0;$i<109;$i++){ $id=$u32(76+4*$i);if($id!==$free)$fatIds[]=$id; }
+    $next=$u32(68);
+    for($i=0;$i<$difCount;$i++) {
+        $claim($next,'difat');$difIds[]=$next;$d=$read($next);
+        for($j=0;$j<$per-1;$j++){$id=$this->logbookOfficeTypeU32($d,4*$j);if($id!==$free)$fatIds[]=$id;}
+        $next=$this->logbookOfficeTypeU32($d,$sector-4);
+    }
+    if (($difCount>0&&$next!==$end) || count($fatIds)!==$fatCount) $bad();
+    $fat=array();
+    foreach($fatIds as $id){$claim($id,'fat');foreach(unpack('V*',$read($id)) as $v)$fat[]=$v;}
+    foreach($fatIds as $id)if(!isset($fat[$id])||$fat[$id]!==$fatMark)$bad();
+    foreach($difIds as $id)if(!isset($fat[$id])||$fat[$id]!==$difMark)$bad();
+    $chain=function($first,$length,$owner)use(&$fat,$end,$n,$sector,$read,$claim,$bad){
+        if ($length===0){if($first!==$end&&$first!==0xffffffff)$bad();return '';}
+        $out='';$id=$first;$steps=0;$limit=$length===null?min($n,256):intdiv($length+$sector-1,$sector);
+        while($id!==$end){if(++$steps>$limit||!isset($fat[$id]))$bad();$claim($id,$owner);$out.=$read($id);$id=$fat[$id];}
+        if($length!==null&&$steps!==$limit)$bad();return $length===null?$out:substr($out,0,$length);
+    };
+    $dir=$chain($u32(48),null,'directory');
+    if ($dir==='' || strlen($dir)>131072 || ($major===4&&strlen($dir)!==$u32(40)*$sector)) $bad();
+    $entries=array();
+    for($p=0;$p<strlen($dir);$p+=128){
+        $e=substr($dir,$p,128);$type=ord($e[66]);if($type===0){$entries[]=null;continue;}
+        $len=$this->logbookOfficeTypeU16($e,64);
+        if (!in_array($type,array(1,2,5),true) || $len<2 || $len>64 || $len%2 || substr($e,$len-2,2)!=="\0\0" || ord($e[67])>1) $bad();
+        $raw=substr($e,0,$len-2);$name=@iconv('UTF-16LE','UTF-8',$raw);
+        if ($name===false || $name==='' || @iconv('UTF-8','UTF-16LE',$name)!==$raw || preg_match('~[\\\\/:!\x00]~u',$name)) $bad();
+        $low=$this->logbookOfficeTypeU32($e,120);$high=$this->logbookOfficeTypeU32($e,124);
+        if ($high!==0 || $low>50000000) $bad();
+        $entries[]=array('name'=>$name,'type'=>$type,'left'=>$this->logbookOfficeTypeU32($e,68),'right'=>$this->logbookOfficeTypeU32($e,72),'child'=>$this->logbookOfficeTypeU32($e,76),'start'=>$this->logbookOfficeTypeU32($e,116),'size'=>$low);
+    }
+    if (!isset($entries[0]) || $entries[0]['type']!==5 || $entries[0]['name']!=='Root Entry' || $entries[0]['left']!==$free || $entries[0]['right']!==$free) $bad();
+    $visited=array(0=>true);$todo=array(array($entries[0]['child'],0));$siblings=array();$rootStreams=array();
+    while($todo){
+        list($id,$parent)=array_pop($todo);if($id===$free)continue;
+        if(isset($visited[$id])||!isset($entries[$id])||$entries[$id]['type']===5)$bad();
+        $entry=$entries[$id];$key=$parent.':'.strtolower($entry['name']);
+        if(isset($siblings[$key]))$bad();$siblings[$key]=true;$visited[$id]=true;
+        $todo[]=array($entry['left'],$parent);$todo[]=array($entry['right'],$parent);
+        if($entry['type']===1){
+            if($entry['size']!==0)$bad();
+            $todo[]=array($entry['child'],$id);
+        }else{
+            if($entry['child']!==$free)$bad();
+            if($parent===0)$rootStreams[$id]=true;
+        }
+    }
+    foreach($entries as $id=>$e)if($e!==null&&!isset($visited[$id]))$bad();
+    $miniCount=$u32(64);
+    if ($miniCount>$n || ($miniCount===0&&$u32(60)!==$end)) $bad();
+    $miniBytes=$chain($u32(60),$miniCount*$sector,'minifat');$miniFat=$miniBytes===''?array():array_values(unpack('V*',$miniBytes));
+    $root=$entries[0];$mini=$chain($root['start'],$root['size'],'mini-stream');
+    if (strlen($mini)%64) $bad();
+    $miniUsed=array();$streams=array();
+    foreach($entries as $id=>$e) {
+        if($id===0||$e===null||$e['type']===1)continue;
+        if($e['size']>=4096)$data=$chain($e['start'],$e['size'],'stream-'.$id);
+        elseif($e['size']===0){if($e['start']!==$end&&$e['start']!==$free)$bad();$data='';}
+        else{
+            $data='';$sid=$e['start'];$expected=intdiv($e['size']+63,64);$steps=0;
+            while($sid!==$end){if(++$steps>$expected||!isset($miniFat[$sid])||isset($miniUsed[$sid])||$sid>=intdiv(strlen($mini),64))$bad();$miniUsed[$sid]=true;$data.=substr($mini,$sid*64,64);$sid=$miniFat[$sid];}
+            if($steps!==$expected)$bad();$data=substr($data,0,$e['size']);
+        }
+        if(isset($rootStreams[$id]))$streams[$e['name']]=$data;
+    }
+    // No allocated orphan sectors, hidden chains or shared stream sectors.
+    for($i=0;$i<$n;$i++)if(!isset($fat[$i])||(!isset($owners[$i])&&$fat[$i]!==$free))$bad();
+    foreach($miniFat as $i=>$v)if(!isset($miniUsed[$i])&&$v!==$free)$bad();
+    return $streams;
+}
+
+
+
+private function logbookLegacyOffice($bytes)
+{
+    $bad=function(){throw new CHttpException(415,'Office DOC/XLS/PPT rusak, terenkripsi, ambigu, atau memiliki fitur aktif/tidak didukung. Gunakan dokumen sederhana tanpa macro/objek tertanam atau PDF.');};
+    if (PHP_INT_SIZE<8 || !function_exists('iconv')) throw new CHttpException(503,'Inspector Office memerlukan PHP 64-bit dan iconv.');
+    $streams=$this->logbookCfbStreams($bytes,$bad);
+    $word=isset($streams['WordDocument']);$excel=isset($streams['Workbook'])||isset($streams['Book']);$ppt=isset($streams['PowerPoint Document']);
+    if ((int)$word+(int)$excel+(int)$ppt!==1) $bad();
+    $common=array("\x01CompObj","\x05SummaryInformation","\x05DocumentSummaryInformation");
+    $allowed=$word?array('WordDocument','0Table','1Table'):($excel?array('Workbook','Book'):array('PowerPoint Document','Current User'));
+    foreach($streams as $name=>$data) {
+        // Closed stream set: rejects VBA storages, ObjectPool, Ole10Native,
+        // encrypted packages, Pictures/Data/unknown streams and embedded files.
+        if (!in_array($name,array_merge($common,$allowed),true)) $bad();
+        if (in_array($name,array("\x05SummaryInformation","\x05DocumentSummaryInformation"),true) && (strlen($data)<28 || substr($data,0,2)!=="\xfe\xff")) $bad();
+        if ($name==="\x01CompObj" && (strlen($data)<28 || substr($data,0,4)!=="\x01\x00\xfe\xff")) $bad();
+        // Defense in depth for obvious executable/nested-container payloads.
+        if (substr($data,0,2)==='MZ' || strpos($data,"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")!==false || substr($data,0,4)==="\x7fELF") $bad();
+    }
+    if ($word) {
+        $w=$streams['WordDocument'];
+        if (strlen($w)<154 || $this->logbookOfficeU16($w,0)!==0xa5ec || $this->logbookOfficeU16($w,2)!==0xc1) $bad();
+        $flags=$this->logbookOfficeU16($w,10);
+        // fDot (template), fEncrypted, fObfuscated. A nonzero lKey is unsafe.
+        if (($flags&0x8101)!==0 || $this->logbookOfficeU32($w,14)!==0) $bad();
+        $table=($flags&0x0200)?'1Table':'0Table';
+        if (!isset($streams[$table]) || strlen($streams[$table])<2 || isset($streams[$table==='1Table'?'0Table':'1Table'])) $bad();
+        $fcMin=$this->logbookOfficeU32($w,24);$fcMac=$this->logbookOfficeU32($w,28);
+        if ($fcMin<32 || $fcMin>$fcMac || $fcMac>strlen($w)) $bad();
+        // Word 97+ FibRgFcLcb: reject legacy macro command tables (Cmds),
+        // macro names (PlcfMcr/SttbfMcr), DDE/linked fields and attached template.
+        $pos=32;$csw=$this->logbookOfficeU16($w,$pos);$pos+=2+2*$csw;
+        if ($csw!==14 || $pos+2>strlen($w)) $bad();
+        $cslw=$this->logbookOfficeU16($w,$pos);$pos+=2+4*$cslw;
+        if ($cslw!==22 || $pos+2>strlen($w)) $bad();
+        $pairs=$this->logbookOfficeU16($w,$pos);$pos+=2;
+        if ($pairs!==93 || $pos+8*$pairs>strlen($w)) $bad();
+        for($i=0;$i<$pairs;$i++) {
+            $fc=$this->logbookOfficeU32($w,$pos+8*$i);$lcb=$this->logbookOfficeU32($w,$pos+8*$i+4);
+            if ($i===87) continue; // dwLowDateTime/dwHighDateTime, not a table span.
+            if ($lcb && ($fc>strlen($streams[$table]) || $lcb>strlen($streams[$table])-$fc)) $bad();
+            if (in_array($i,array(16,17,18,19,20,25,26,48,57,59,69,70,85),true) && $lcb!==0) $bad();
+            if ($i===24 && $lcb && ($lcb!==2 || substr($streams[$table],$fc,2)!=="\xff\x40")) $bad();
+            if ($i===32 && $lcb) {
+                // SttbfAssoc's template / next document must be empty. Reject
+                // external attached-template loading, not the ordinary title.
+                $assoc=substr($streams[$table],$fc,$lcb);
+                if (strlen($assoc)<10 || substr($assoc,0,2)!=="\xff\xff" || $this->logbookOfficeU16($assoc,2)<2 || $this->logbookOfficeU16($assoc,4)!==0 || substr($assoc,6,4)!=="\0\0\0\0") $bad();
+            }
+        }
+        return array('ext'=>'doc','mime'=>'application/msword');
+    }
+    if ($excel) {
+        if (isset($streams['Workbook'],$streams['Book'])) $bad();
+        $b=isset($streams['Workbook'])?$streams['Workbook']:$streams['Book'];
+        $offset=0;$depth=0;$records=0;$global=false;$sheets=array();$sheetBofs=array();$seenEof=false;
+        while($offset<strlen($b)) {
+            // Producers can pad the Workbook stream after its final EOF.
+            if ($seenEof && $depth===0 && trim(substr($b,$offset),"\0")==='') break;
+            if ($offset+4>strlen($b) || ++$records>250000) $bad();
+            $id=$this->logbookOfficeU16($b,$offset);$len=$this->logbookOfficeU16($b,$offset+2);$at=$offset;$offset+=4;
+            if ($len>8224 || $len>strlen($b)-$offset) $bad();
+            $r=substr($b,$offset,$len);$offset+=$len;
+            if ($id===0x0809) {
+                if ($len<8 || $this->logbookOfficeU16($r,0)!==0x0600 || $depth!==0) $bad();
+                $type=$this->logbookOfficeU16($r,2);
+                if (!$global) {if ($at!==0 || $type!==5) $bad();$global=true;}
+                else {if (!in_array($type,array(0x10,0x20),true)) $bad();$sheetBofs[$at]=true;}
+                $depth=1;$seenEof=false;
+            } elseif ($id===0x000a) {if ($len!==0 || $depth!==1) $bad();$depth=0;$seenEof=true;}
+            elseif ($depth!==1) $bad();
+            // FILEPASS, VBA project, macro names, embedded OBJ, external names,
+            // XLM/custom function records and all formula cells are outside this
+            // deliberately static-worksheet profile (no formula token evaluator).
+            if (in_array($id,array(0x2f,0xd3,0x18,0x5d,0x23,0x6,0x406,0x206,0x4bc,0x1ba,0x1bb),true)) $bad();
+            if ($id===0x85) {
+                if ($len<8 || !in_array(ord($r[5]),array(0,2),true)) $bad();
+                $sheets[]=$this->logbookOfficeU32($r,0);
+            }
+            if ($id===0x1ae && ($len<4 || $this->logbookOfficeU16($r,2)!==0x0401)) $bad();
+        }
+        if (!$global || $depth!==0 || !$seenEof || !$sheets || count($sheets)!==count($sheetBofs) || count(array_unique($sheets))!==count($sheets)) $bad();
+        foreach($sheets as $at) if (!isset($sheetBofs[$at])) $bad();
+        return array('ext'=>'xls','mime'=>'application/vnd.ms-excel');
+    }
+    if (!isset($streams['Current User'])) $bad();
+    $cu=$streams['Current User'];$p=$streams['PowerPoint Document'];
+    if (strlen($cu)<28 || $this->logbookOfficeU16($cu,2)!==4086 || $this->logbookOfficeU32($cu,4)>strlen($cu)-8 || $this->logbookOfficeU32($cu,12)!==0xe391c05f) $bad();
+    $edit=$this->logbookOfficeU32($cu,16);
+    if ($edit+8>strlen($p) || $this->logbookOfficeU16($p,$edit+2)!==4085 || $this->logbookOfficeU16($p,2)!==1000) $bad();
+    $edits=0;
+    do {
+        if (++$edits>4096 || $edit+36>strlen($p) || $this->logbookOfficeU16($p,$edit+2)!==4085) $bad();
+        $editSize=$this->logbookOfficeU32($p,$edit+4);
+        if (!in_array($editSize,array(28,32),true) || $edit+8+$editSize>strlen($p) || ($editSize===32&&$this->logbookOfficeU32($p,$edit+36)!==0)) $bad();
+        $prev=$this->logbookOfficeU32($p,$edit+16);
+        if ($prev!==0&&$prev>=$edit) $bad();
+        $edit=$prev;
+    } while($edit!==0);
+    $records=0;$this->logbookPptRecords($p,0,strlen($p),0,$records,$bad);
+    return array('ext'=>'ppt','mime'=>'application/vnd.ms-powerpoint');
+}
+private function logbookOfficeU16($b,$p) { return unpack('v',substr($b,$p,2))[1]; }
+private function logbookOfficeU32($b,$p) { return unpack('V',substr($b,$p,4))[1]; }
+private function logbookPptRecords($b,$start,$end,$depth,&$count,$bad)
+{
+    if ($depth>32) $bad();
+    for($p=$start;$p<$end;) {
+        if ($end-$p<8 || ++$count>250000) $bad();
+        $ver=$this->logbookOfficeU16($b,$p)&15;$id=$this->logbookOfficeU16($b,$p+2);$size=$this->logbookOfficeU32($b,$p+4);$p+=8;
+        if ($size>$end-$p) $bad();
+        // VBA, routing, OLE/ActiveX, external/interactive actions, embedded media,
+        // encryption. Inspect nested record containers, not just top-level IDs.
+        if ($id===1024 && ($size!==12 || substr($b,$p,8)!==str_repeat("\0",8) || $this->logbookOfficeU32($b,$p+8)!==2)) $bad();
+        if ($id===1023 && ($ver!==15 || $size!==20 || $this->logbookOfficeU16($b,$p+2)!==1024)) $bad();
+        if (in_array($id,array(1030,3009,4035,4044,4045,4046,4049,4051,4055,4074,4075,4078,4082,4083,4091,4100,4101,4102,4103,4109,4110,4111,4112,4113,4114,4115,12052),true)) $bad();
+        if ($ver===15) $this->logbookPptRecords($b,$p,$p+$size,$depth+1,$count,$bad);
+        $p+=$size;
+    }
+}
+
+private function logbookCfbStreams($b,$bad)
+{
+    $free=0xffffffff;$end=0xfffffffe;$fatMark=0xfffffffd;$difMark=0xfffffffc;
+    $size=strlen($b);
+    if ($size<512 || $size>50000000 || substr($b,0,8)!=="\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" || substr($b,8,16)!==str_repeat("\0",16)) $bad();
+    $u16=function($p)use($b){return $this->logbookOfficeU16($b,$p);};$u32=function($p)use($b){return $this->logbookOfficeU32($b,$p);};
+    $major=$u16(26);$shift=$u16(30);
+    if ($u16(28)!==0xfffe || !(($major===3&&$shift===9)||($major===4&&$shift===12)) || $u16(32)!==6 || substr($b,34,6)!==str_repeat("\0",6) || $u32(56)!==4096) $bad();
+    $sector=1<<$shift;
+    if ($size%$sector!==0 || ($major===3&&$u32(40)!==0) || ($sector>512&&trim(substr($b,512,$sector-512),"\0")!=='')) $bad();
+    $n=intdiv($size,$sector)-1;$per=intdiv($sector,4);$owners=array();$fatIds=array();$difIds=array();
+    $read=function($id)use($b,$n,$sector,$bad){if($id<0||$id>=$n)$bad();return substr($b,($id+1)*$sector,$sector);};
+    $claim=function($id,$owner)use(&$owners,$n,$bad){if($id<0||$id>=$n||isset($owners[$id]))$bad();$owners[$id]=$owner;};
+    $fatCount=$u32(44);$difCount=$u32(72);
+    if ($fatCount<1 || $fatCount>intdiv($n+$per-1,$per) || $difCount>intdiv($fatCount+$per-2,$per-1) || ($difCount===0&&$u32(68)!==$end)) $bad();
+    for($i=0;$i<109;$i++){ $id=$u32(76+4*$i);if($id!==$free)$fatIds[]=$id; }
+    $next=$u32(68);
+    for($i=0;$i<$difCount;$i++) {
+        $claim($next,'difat');$difIds[]=$next;$d=$read($next);
+        for($j=0;$j<$per-1;$j++){$id=$this->logbookOfficeU32($d,4*$j);if($id!==$free)$fatIds[]=$id;}
+        $next=$this->logbookOfficeU32($d,$sector-4);
+    }
+    if (($difCount>0&&$next!==$end) || count($fatIds)!==$fatCount) $bad();
+    $fat=array();
+    foreach($fatIds as $id){$claim($id,'fat');foreach(unpack('V*',$read($id)) as $v)$fat[]=$v;}
+    foreach($fatIds as $id)if(!isset($fat[$id])||$fat[$id]!==$fatMark)$bad();
+    foreach($difIds as $id)if(!isset($fat[$id])||$fat[$id]!==$difMark)$bad();
+    $chain=function($first,$length,$owner)use(&$fat,$end,$n,$sector,$read,$claim,$bad){
+        if ($length===0){if($first!==$end&&$first!==0xffffffff)$bad();return '';}
+        $out='';$id=$first;$steps=0;$limit=$length===null?min($n,256):intdiv($length+$sector-1,$sector);
+        while($id!==$end){if(++$steps>$limit||!isset($fat[$id]))$bad();$claim($id,$owner);$out.=$read($id);$id=$fat[$id];}
+        if($length!==null&&$steps!==$limit)$bad();return $length===null?$out:substr($out,0,$length);
+    };
+    $dir=$chain($u32(48),null,'directory');
+    if ($dir==='' || strlen($dir)>131072 || ($major===4&&strlen($dir)!==$u32(40)*$sector)) $bad();
+    $entries=array();$names=array();
+    for($p=0;$p<strlen($dir);$p+=128){
+        $e=substr($dir,$p,128);$type=ord($e[66]);if($type===0){$entries[]=null;continue;}
+        $len=$this->logbookOfficeU16($e,64);
+        if (!in_array($type,array(1,2,5),true) || $len<2 || $len>64 || $len%2 || substr($e,$len-2,2)!=="\0\0" || ord($e[67])>1) $bad();
+        $raw=substr($e,0,$len-2);$name=@iconv('UTF-16LE','UTF-8',$raw);
+        if ($name===false || $name==='' || @iconv('UTF-8','UTF-16LE',$name)!==$raw || preg_match('~[\\\\/:!\x00]~u',$name)) $bad();
+        $key=strtolower($name);if(isset($names[$key]))$bad();$names[$key]=true;
+        $low=$this->logbookOfficeU32($e,120);$high=$this->logbookOfficeU32($e,124);
+        if ($high!==0 || $low>50000000) $bad();
+        $entries[]=array('name'=>$name,'type'=>$type,'left'=>$this->logbookOfficeU32($e,68),'right'=>$this->logbookOfficeU32($e,72),'child'=>$this->logbookOfficeU32($e,76),'start'=>$this->logbookOfficeU32($e,116),'size'=>$low);
+    }
+    if (!isset($entries[0]) || $entries[0]['type']!==5 || $entries[0]['name']!=='Root Entry' || $entries[0]['left']!==$free || $entries[0]['right']!==$free) $bad();
+    $visited=array(0=>true);$todo=array($entries[0]['child']);
+    while($todo){
+        $id=array_pop($todo);if($id===$free)continue;
+        if(isset($visited[$id])||!isset($entries[$id])||$entries[$id]['type']===5||$entries[$id]['child']!==$free)$bad();
+        $entry=$entries[$id];
+        // Word normally carries an empty ObjectPool storage. An object or any
+        // other storage is rejected, even if its children are unreferenced.
+        if($entry['type']===1&&($entry['name']!=='ObjectPool'||$entry['size']!==0||($entry['start']!==$end&&$entry['start']!==0)))$bad();
+        $visited[$id]=true;$todo[]=$entry['left'];$todo[]=$entry['right'];
+    }
+    foreach($entries as $id=>$e)if($e!==null&&!isset($visited[$id]))$bad();
+    $miniCount=$u32(64);
+    if ($miniCount>intdiv($n+$per-1,$per) || ($miniCount===0&&$u32(60)!==$end)) $bad();
+    $miniBytes=$chain($u32(60),$miniCount*$sector,'minifat');$miniFat=$miniBytes===''?array():array_values(unpack('V*',$miniBytes));
+    $root=$entries[0];$mini=$chain($root['start'],$root['size'],'mini-stream');
+    if (strlen($mini)%64) $bad();
+    $miniUsed=array();$streams=array();
+    foreach($entries as $id=>$e) {
+        if($id===0||$e===null||$e['type']===1)continue;
+        if($e['size']>=4096)$data=$chain($e['start'],$e['size'],'stream-'.$id);
+        elseif($e['size']===0){if($e['start']!==$end&&$e['start']!==$free)$bad();$data='';}
+        else{
+            $data='';$sid=$e['start'];$expected=intdiv($e['size']+63,64);$steps=0;
+            while($sid!==$end){if(++$steps>$expected||!isset($miniFat[$sid])||isset($miniUsed[$sid])||$sid>=intdiv(strlen($mini),64))$bad();$miniUsed[$sid]=true;$data.=substr($mini,$sid*64,64);$sid=$miniFat[$sid];}
+            if($steps!==$expected)$bad();$data=substr($data,0,$e['size']);
+        }
+        $streams[$e['name']]=$data;
+    }
+    // No allocated orphan sectors, hidden chains or shared stream sectors.
+    for($i=0;$i<$n;$i++)if(!isset($fat[$i])||(!isset($owners[$i])&&$fat[$i]!==$free))$bad();
+    foreach($miniFat as $i=>$v)if(!isset($miniUsed[$i])&&$v!==$free)$bad();
+    return $streams;
+}
+
+
+
 private function logbookAttachmentGroup($label)
 {
     $label = strtolower(trim((string)$label));
@@ -4415,18 +4804,19 @@ private function logbookStoreAttachment($source, $originalName, $group, $clientI
     }
     throw new CHttpException(500,'Unable to allocate unique storage name.');
 }
+
 private function logbookValidateNewAttachmentReference($path, $idClient, $label=null)
 {
     if (!is_string($path)) throw new CHttpException(422,'Referensi upload tidak valid.');
     $tenant=preg_quote((string)$idClient,'~');
-    $legacy=preg_match('~^_file/[0-9]{4}-[0-9]{2}/[0-9]{2}/'.$tenant.'/[a-f0-9]{48}\.(jpg|png|webp|pdf|docx|xlsx|pptx)$~D',$path);
+    $legacy=preg_match('~^_file/[0-9]{4}-[0-9]{2}/[0-9]{2}/'.$tenant.'/[a-f0-9]{48}\.(jpg|png|webp|pdf|doc|docx|xls|xlsx|ppt|pptx)$~D',$path);
     $grouped=preg_match('~^_file/([0-9]{4}-[0-9]{2})/([0-9]{2})/(attachment|attachment-before|attachment-after)/'.$tenant.'/([^/]+)$~D',$path,$m);
     $flat=false;
     if (!$grouped) $flat=preg_match('~^_file/([0-9]{4}-[0-9]{2})/([0-9]{2})/(attachment|attachment-before|attachment-after)/([^/]+)$~D',$path,$m);
     if (!$legacy&&!$grouped&&!$flat) throw new CHttpException(422,'Referensi upload bukan milik tenant/format server.');
     if ($grouped||$flat) {
         $name=rawurldecode($m[4]);$ext=pathinfo($name,PATHINFO_EXTENSION);
-        if (!in_array($ext,array('jpg','png','webp','pdf','docx','xlsx','pptx'),true)||rawurlencode($name)!==$m[4]||$this->logbookAttachmentFilename($name,$ext)!==$name || ($grouped&&$label!==null&&$this->logbookAttachmentGroup($label)!==$m[3])) throw new CHttpException(422,'Nama/grup attachment tidak sesuai.');
+        if (!in_array($ext,array('jpg','png','webp','pdf','doc','docx','xls','xlsx','ppt','pptx'),true)||rawurlencode($name)!==$m[4]||$this->logbookAttachmentFilename($name,$ext)!==$name || ($grouped&&$label!==null&&$this->logbookAttachmentGroup($label)!==$m[3])) throw new CHttpException(422,'Nama/grup attachment tidak sesuai.');
         if (!checkdate((int)substr($m[1],5,2),(int)$m[2],(int)substr($m[1],0,4))) throw new CHttpException(422,'Tanggal storage tidak valid.');
     }
     $root=realpath(Yii::getPathOfAlias('webroot'));

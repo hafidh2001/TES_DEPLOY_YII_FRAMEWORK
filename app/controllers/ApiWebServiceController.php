@@ -2418,6 +2418,14 @@ class ApiWebServiceController extends Controller {
                  * Jika ada Morbiditas tanpa binding (data lama), fallback
                  * ke logika timestamp. */
                 CASE
+                    WHEN session.restored_after_logbook_id IS NOT NULL THEN
+                        session.points - COALESCE(session.restored_bound_points,0) +
+                        COALESCE(SUM(CASE
+                            WHEN ma.id IS NOT NULL
+                             AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
+                             AND (lb.id_morbiditas_period=session.id OR
+                                 (lb.id_morbiditas_period IS NULL AND lb.id>session.restored_after_logbook_id AND lb.id_semester=u.id_semester))
+                            THEN category.points ELSE 0 END),0)::int
                     WHEN session.id IS NOT NULL AND NOT EXISTS (
                         SELECT 1 FROM t_logbook unbound_lb
                         JOIN m_action unbound_a ON unbound_a.id = unbound_lb.id_action
@@ -2430,7 +2438,7 @@ class ApiWebServiceController extends Controller {
                           AND (unbound_lb.verified IS TRUE
                                OR LOWER(COALESCE(unbound_lb.verified_status, '')) = 'verified')
                           AND (LOWER(COALESCE(unbound_a.identifier, '')) = 'morbiditas'
-                               OR LOWER(COALESCE(unbound_a.name, '')) = 'morbiditas')
+                               OR LOWER(COALESCE(unbound_a.name, '')) = 'morbiditas' OR unbound_a.id=39)
                     )
                     THEN
                         /* Semua Morbiditas sudah ter-binding: hitung dari binding */
@@ -2464,7 +2472,7 @@ class ApiWebServiceController extends Controller {
             FROM m_user u
             INNER JOIN m_role role ON role.id = u.id_role
             LEFT JOIN LATERAL (
-                SELECT mph.id, mph.started_at
+                SELECT mph.id, mph.started_at, mph.points, mph.restored_after_logbook_id, mph.restored_bound_points
                 FROM t_morbiditas_points_history mph
                 WHERE mph.id_user = u.id
                   AND mph.id_client = u.id_client
@@ -2495,7 +2503,7 @@ class ApiWebServiceController extends Controller {
                 ON ma.id = lb.id_action
                AND ma.id_client = lb.id_client
                AND (LOWER(COALESCE(ma.identifier, '')) = 'morbiditas'
-                    OR LOWER(COALESCE(ma.name, '')) = 'morbiditas')
+                    OR LOWER(COALESCE(ma.name, '')) = 'morbiditas' OR ma.id=39)
             LEFT JOIN m_action_category category
                 ON category.id = lb.id_category
                AND category.id_action = lb.id_action
@@ -2514,10 +2522,10 @@ class ApiWebServiceController extends Controller {
                     AND morbidity_lb.id_client = u.id_client
                     AND morbidity_lb.deleted_at IS NULL
                     AND (LOWER(COALESCE(morbidity_action.identifier, '')) = 'morbiditas'
-                         OR LOWER(COALESCE(morbidity_action.name, '')) = 'morbiditas')
+                         OR LOWER(COALESCE(morbidity_action.name, '')) = 'morbiditas' OR morbidity_action.id=39)
               )
             GROUP BY u.id, u.id_stase, u.id_semester, u.display_name, u.code,
-                     session.id, session.started_at,
+                     session.id, session.started_at, session.points, session.restored_after_logbook_id, session.restored_bound_points,
                      stase_boundary.created_date
         ";
 
@@ -2555,6 +2563,7 @@ class ApiWebServiceController extends Controller {
     }
     Yii::app()->end();
 }
+
 
     
     public function actionGetListMorbidityByUser() {
@@ -3023,6 +3032,459 @@ class ApiWebServiceController extends Controller {
         ]);
     }
     
+    /* The supplied Web login only admits role institution. Do not import Mobile Staff permissions.
+ * No server session/token verifier exists in the supplied controller; request IDs remain legacy protocol.
+ * If deployment adds authenticated middleware, it MUST bind actor/client before entering these methods. */
+private function webMorbiditasActor($db,$post)
+{
+    foreach(array('created_by','id_client') as $key) {
+        if(!is_array($post)||!isset($post[$key])||!is_scalar($post[$key])||!preg_match('/^[1-9][0-9]*$/',(string)$post[$key]))
+            throw new RuntimeException($key.' wajib berupa ID positif');
+    }
+    // actionLogin returns mu.id/id_client/role from Yii::app()->db, NOT dbPrasi.
+    // Never resolve this ID against a different database or fall back to a same-ID PPDS/Staff.
+    // Institution status permits Active or legacy NULL/blank, not other statuses.
+    // is_show is display-only for Institution; PPDS visibility checks stay unchanged.
+    $identityDb=Yii::app()->db;
+    $actor=$identityDb->createCommand("SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role
+        WHERE u.id=:actor AND u.id_client=:client AND u.deleted_at IS NULL
+        AND lower(r.name)='institution'
+        AND lower(btrim(coalesce(u.status,''))) IN ('','active')")
+        ->bindValues(array(':actor'=>(int)$post['created_by'],':client'=>(int)$post['id_client']))->queryRow();
+    if(!$actor) throw new RuntimeException('Aktor Institution tidak valid pada database login (db): periksa created_by/id_client, role, deleted_at, status nonaktif/tidak dikenal; login ulang jika sesi lama. ID dbPrasi tidak dipakai sebagai pengganti identitas login.');
+    // Data/session schema still belongs to dbPrasi (the caller's transaction).
+    $columns=$db->createCommand("SELECT column_name FROM information_schema.columns
+        WHERE table_schema=current_schema() AND table_name='t_morbiditas_points_history'") ->queryAll();
+    $present=array_column($columns,'column_name');
+    foreach(array('transition_logbook_id','previous_session_id','undone_at','restored_at','restored_after_logbook_id','restored_bound_points') as $column) {
+        if(!in_array($column,$present,true)) throw new RuntimeException('Migration morbiditas-semester-undo.sql belum berhasil: kolom '.$column.' belum tersedia. Jangan instal controller sebelum migration COMMIT.');
+    }
+}
+
+
+/* Add once inside ApiWebServiceController. Requires morbiditas-semester-undo.sql.
+ * Web login-compatible Institution role only. Supplied controller has no server-authenticated identity; membership is not sender authentication.
+ * No timestamp inference: legacy rows need explicitly audited session-to-milestone links.
+ */
+private function morbiditasSemesterUndoContext($db, $post, $write = false)
+{
+    foreach (array('created_by','id_client','id_user') as $field) {
+        if (!is_array($post) || !isset($post[$field]) || !is_scalar($post[$field])
+            || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
+            throw new RuntimeException($field.' wajib berupa ID positif');
+        }
+    }
+    $client=(int)$post['id_client']; $actor=(int)$post['created_by']; $user=(int)$post['id_user'];
+    $this->webMorbiditasActor($db,$post);
+    // Same lock order as Milestone Create: PPDS -> sessions -> milestone.
+    $ppds=$db->createCommand("SELECT u.id,u.display_name,u.id_semester,u.id_stase FROM m_user u JOIN m_role r ON r.id=u.id_role
+        WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL
+          AND u.status='Active' AND u.is_show=true AND lower(r.name)='ppds' FOR UPDATE OF u")
+        ->bindValues(array(':user'=>$user,':client'=>$client))->queryRow();
+    if (!$ppds) throw new RuntimeException('PPDS aktif tidak ditemukan untuk client ini');
+    if ($write) {
+        // Also cover legacy/unbound writers which do not acquire the PPDS lock.
+        // Short, conservative global write lock; never hold across network calls.
+        $db->createCommand('LOCK TABLE t_logbook IN SHARE ROW EXCLUSIVE MODE')->execute();
+    }
+    $sessions=$db->createCommand('SELECT * FROM t_morbiditas_points_history
+        WHERE id_user=:user AND id_client=:client AND ended_at IS NULL FOR UPDATE')
+        ->bindValues(array(':user'=>$user,':client'=>$client))->queryAll();
+    if (count($sessions)!==1) throw new RuntimeException('Harus ada tepat satu sesi aktif; muat ulang atau perbaiki riwayat sesi');
+    $open=$sessions[0];
+    if (!empty($open['undone_at']) || empty($open['transition_logbook_id']) || empty($open['previous_session_id'])) {
+        throw new RuntimeException('Sesi aktif tidak memiliki bukti transisi semester; riwayat lama perlu ditautkan melalui audit, bukan ditebak');
+    }
+    if ((int)$ppds['id_semester']!==(int)$open['id_semester'] || $ppds['id_stase']!==$open['id_stase']) {
+        throw new RuntimeException('Profil PPDS tidak cocok dengan sesi transisi aktif; Undo hanya untuk perubahan semester terakhir');
+    }
+    $newer=$db->createCommand('SELECT id FROM t_morbiditas_points_history
+        WHERE id_user=:user AND id_client=:client AND id>:id AND undone_at IS NULL LIMIT 1')
+        ->bindValues(array(':user'=>$user,':client'=>$client,':id'=>(int)$open['id']))->queryRow();
+    if ($newer) throw new RuntimeException('Sesi aktif bukan transisi terakhir yang sah');
+    $restore=$db->createCommand('SELECT * FROM t_morbiditas_points_history
+        WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at=:transition_started AND undone_at IS NULL FOR UPDATE')
+        ->bindValues(array(':id'=>(int)$open['previous_session_id'],':user'=>$user,':client'=>$client,':transition_started'=>$open['started_at']))->queryRow();
+    if (!$restore || (int)$restore['id'] >= (int)$open['id'] || (int)$restore['id_semester']===(int)$open['id_semester']) {
+        throw new RuntimeException('Tidak ada sesi perubahan semester sebelumnya yang terbukti aman untuk Undo');
+    }
+    $target=$db->createCommand("SELECT lb.* FROM t_logbook lb JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+        WHERE lb.id=:id AND lb.id_user=:user AND lb.id_client=:client AND lb.deleted_at IS NULL
+          AND lb.id_semester=:semester AND lb.id_stase IS NOT DISTINCT FROM :stase
+          AND a.is_milestone=true AND a.show_on_milestone=true
+          AND (lower(coalesce(a.identifier,''))='stase' OR lower(coalesce(a.name,''))='stase') FOR UPDATE OF lb")
+        ->bindValues(array(':id'=>(int)$open['transition_logbook_id'],':user'=>$user,':client'=>$client,
+            ':semester'=>(int)$open['id_semester'],':stase'=>$open['id_stase']))->queryRow();
+    if (!$target) throw new RuntimeException('Milestone transisi aktif tidak cocok atau sudah diarsipkan');
+    if (isset($post['id_logbook']) && (!is_scalar($post['id_logbook'])
+        || !preg_match('/^[1-9][0-9]*$/',(string)$post['id_logbook']) || (int)$post['id_logbook']!==(int)$target['id'])) {
+        throw new RuntimeException('id_logbook bukan milestone transisi aktif terakhir; Refresh status Undo');
+    }
+    $points=$this->calculateMorbiditasSessionPoints($db,$user,$client,(int)$open['id_semester'],$open['started_at']);
+    $names=$db->createCommand('SELECT sem.name AS semester_name,st.name AS stase_name,sem.id_stage,stage.name AS stage_name
+        FROM m_semester sem LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client
+        LEFT JOIN m_stage stage ON stage.id=sem.id_stage WHERE sem.id=:semester AND sem.id_client=:client')
+        ->bindValues(array(':semester'=>(int)$restore['id_semester'],':stase'=>$restore['id_stase'],':client'=>$client))->queryRow();
+    if (!$names || ($restore['id_stase']!==null && $names['stase_name']===null)) throw new RuntimeException('Master semester/Stase pemulihan tidak ditemukan untuk client ini');
+    $currentName=$db->createCommand('SELECT name FROM m_semester WHERE id=:id AND id_client=:client')
+        ->bindValues(array(':id'=>(int)$open['id_semester'],':client'=>$client))->queryScalar();
+    $currentStaseName=$db->createCommand('SELECT name FROM m_stase WHERE id=:id AND id_client=:client')
+        ->bindValues(array(':id'=>$open['id_stase'],':client'=>$client))->queryScalar();
+    $info=array('id_user'=>$user,'display_name'=>$ppds['display_name'],'can_undo'=>$points===0,
+        'reason'=>$points===0?null:'Undo dikunci: sesi sekarang sudah memiliki poin aktif.',
+        'current_session_id'=>(int)$open['id'],'current_semester_id'=>(int)$open['id_semester'],
+        'current_semester_name'=>$currentName,'current_stase_name'=>$currentStaseName,'current_active_points'=>$points,
+        'archive_semester_name'=>$currentName,'archive_stase_name'=>$currentStaseName,
+        'archive_logbook_id'=>(int)$target['id'],'archive_semester_id'=>(int)$target['id_semester'],
+        'archive_stase_id'=>$target['id_stase']!==null?(int)$target['id_stase']:null,
+        'archive_created_date'=>$target['created_date'],'archive_activity_date'=>$target['date'],
+        'will_archive_transition'=>true,'restore_session_id'=>(int)$restore['id'],
+        'restore_semester_id'=>(int)$restore['id_semester'],'restore_semester_name'=>$names['semester_name'],
+        'restore_stase_id'=>$restore['id_stase']!==null?(int)$restore['id_stase']:null,'restore_stase_name'=>$names['stase_name'],
+        'restore_stage_id'=>$names['id_stage'],'restore_stage_name'=>$names['stage_name'],
+        // Zero, including an epoch bootstrap, is an authoritative saved snapshot.
+        'restore_points'=>(int)$restore['points']);
+    return array('open'=>$open,'restore'=>$restore,'target'=>$target,'info'=>$info);
+}
+
+/* Current bound sum captured at restore; later verification changes remain a delta, not a new baseline. */
+private function morbiditasSemesterUndoBoundPoints($db, $user, $client, $session)
+{
+    return (int)$db->createCommand("SELECT COALESCE(SUM(category.points),0)::int FROM t_logbook lb
+        JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+        JOIN m_action_category category ON category.id=lb.id_category
+        WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_morbiditas_period=:session
+          AND lb.deleted_at IS NULL
+          AND (lb.verified IS TRUE OR lower(coalesce(lb.verified_status,''))='verified')
+          AND (lower(coalesce(a.identifier,''))='morbiditas' OR lower(coalesce(a.name,''))='morbiditas' OR a.id=39)")
+        ->bindValues(array(':user'=>(int)$user,':client'=>(int)$client,':session'=>(int)$session))->queryScalar();
+}
+
+/* REPLACE existing helper. Caller holds PPDS lock + transaction; explicit milestone link is mandatory. */
+private function transitionMorbiditasPointsSession($db, $idUser, $idClient, $oldSemester, $oldStase, $newSemester, $newStase, $milestoneId)
+{
+    if ((int)$oldSemester===(int)$newSemester) return;
+    $scope=array(':user'=>(int)$idUser,':client'=>(int)$idClient);
+    $rows=$db->createCommand('SELECT * FROM t_morbiditas_points_history WHERE id_user=:user AND id_client=:client AND ended_at IS NULL FOR UPDATE')
+        ->bindValues($scope)->queryAll();
+    if (count($rows)>1) throw new RuntimeException('Riwayat memiliki lebih dari satu sesi aktif; transisi dibatalkan');
+    $open=count($rows)?$rows[0]:null;
+    if (!$open && (int)$oldSemester>0) {
+        $open=$db->createCommand("INSERT INTO t_morbiditas_points_history
+            (id_user,id_client,id_semester,id_stase,points,started_at) VALUES (:user,:client,:semester,:stase,0,'1970-01-01 00:00:00+00') RETURNING *")
+            ->bindValues($scope+array(':semester'=>(int)$oldSemester,':stase'=>$oldStase))->queryRow();
+    }
+    if ($open) {
+        if ((int)$open['id_semester']!==(int)$oldSemester) throw new RuntimeException('Semester profil tidak cocok dengan sesi aktif');
+        $points=$this->calculateMorbiditasSessionPoints($db,$idUser,$idClient,(int)$oldSemester,$open['started_at']);
+        $changed=$db->createCommand('UPDATE t_morbiditas_points_history SET points=:points,id_stase=:stase,ended_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at IS NULL')
+            ->bindValues($scope+array(':points'=>$points,':stase'=>$oldStase,':id'=>(int)$open['id']))->execute();
+        if ($changed!==1) throw new RuntimeException('Sesi lama berubah; transisi dibatalkan');
+    }
+    $new=$db->createCommand('INSERT INTO t_morbiditas_points_history
+        (id_user,id_client,id_semester,id_stase,points,started_at,transition_logbook_id,previous_session_id)
+        VALUES (:user,:client,:semester,:stase,0,CURRENT_TIMESTAMP,:milestone,:previous) RETURNING id')
+        ->bindValues($scope+array(':semester'=>(int)$newSemester,':stase'=>$newStase,':milestone'=>(int)$milestoneId,
+            ':previous'=>$open?(int)$open['id']:null))->queryRow();
+    if (!$new) throw new RuntimeException('Sesi baru tidak tersimpan');
+}
+
+/* REPLACE existing helper. Authoritative restored zero/positive snapshots are never re-derived. */
+private function calculateMorbiditasSessionPoints($db, $idUser, $idClient, $idSemester, $startedAt)
+{
+    // Cari sesi aktif untuk user ini
+    $activeSession = $db->createCommand('SELECT id, points, restored_at, restored_after_logbook_id, restored_bound_points
+        FROM t_morbiditas_points_history
+        WHERE id_user=:user AND id_client=:client AND id_semester=:semester
+          AND ended_at IS NULL ORDER BY id DESC LIMIT 1')
+        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient, ':semester'=>(int)$idSemester))
+        ->queryRow();
+
+    if (!$activeSession) {
+        // Tidak ada sesi aktif, fallback ke hitungan lama
+        return $this->calculateMorbiditasSessionPointsFallback($db, $idUser, $idClient, $idSemester, $startedAt);
+    }
+
+    $sessionId = (int)$activeSession['id'];
+    if ($activeSession['restored_after_logbook_id'] !== null) {
+        // Snapshot remains authoritative (also zero); current bound SUM minus its
+        // restore-time SUM preserves later verification changes to old pending rows.
+        $boundDelta=$this->morbiditasSemesterUndoBoundPoints($db,$idUser,$idClient,$sessionId)
+            -(int)$activeSession['restored_bound_points'];
+        // Only newly inserted unbound legacy rows use the ID watermark.
+        $delta=$db->createCommand("SELECT COALESCE(SUM(category.points),0)::int FROM t_logbook lb
+            JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+            JOIN m_action_category category ON category.id=lb.id_category
+            WHERE lb.id_user=:user AND lb.id_client=:client AND lb.deleted_at IS NULL
+              AND lb.id>:watermark AND lb.id_morbiditas_period IS NULL AND lb.id_semester=:semester
+              AND (lb.verified IS TRUE OR lower(coalesce(lb.verified_status,''))='verified')
+              AND (lower(coalesce(a.identifier,''))='morbiditas' OR lower(coalesce(a.name,''))='morbiditas' OR a.id=39)")
+            ->bindValues(array(':user'=>(int)$idUser,':client'=>(int)$idClient,':watermark'=>(int)$activeSession['restored_after_logbook_id'],
+                ':semester'=>(int)$idSemester))->queryScalar();
+        return (int)$activeSession['points']+$boundDelta+(int)$delta;
+    }
+
+    // Hitung poin hanya dari Morbiditas yang terikat ke sesi ini
+    $bound = $db->createCommand("SELECT COALESCE(SUM(category.points), 0)::int AS total
+        FROM t_logbook lb
+        INNER JOIN m_action action ON action.id=lb.id_action AND action.id_client=lb.id_client
+        INNER JOIN m_action_category category ON category.id=lb.id_category
+        WHERE lb.id_morbiditas_period=:session_id AND lb.id_user=:user AND lb.id_client=:client
+          AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+          AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, ''))='verified')
+          AND (LOWER(COALESCE(action.identifier, ''))='morbiditas'
+               OR LOWER(COALESCE(action.name, ''))='morbiditas' OR action.id=39)")
+        ->bindValues(array(':session_id'=>$sessionId,':user'=>(int)$idUser,':client'=>(int)$idClient))->queryRow();
+
+    $boundPoints = (int)($bound['total'] ?? 0);
+
+    // Cek apakah ada Morbiditas TANPA binding di semester ini (data lama)
+    $unbound = $db->createCommand("SELECT COUNT(*) FROM t_logbook lb
+        JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+        WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_semester=:semester
+          AND lb.id_morbiditas_period IS NULL AND lb.deleted_at IS NULL
+          AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, ''))='verified')
+          AND (LOWER(COALESCE(a.identifier, ''))='morbiditas'
+               OR LOWER(COALESCE(a.name, ''))='morbiditas' OR a.id=39)")
+        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient, ':semester'=>(int)$idSemester))
+        ->queryScalar();
+
+    if ((int)$unbound > 0) {
+        // Ada data lama tanpa binding, fallback ke hitungan timestamp
+        return $this->calculateMorbiditasSessionPointsFallback($db, $idUser, $idClient, $idSemester, $startedAt);
+    }
+
+    return $boundPoints;
+}
+
+private function calculateMorbiditasSessionPointsFallback($db, $idUser, $idClient, $idSemester, $startedAt)
+{
+    $restoredSession = $db->createCommand('SELECT points,restored_at FROM t_morbiditas_points_history
+        WHERE id_user=:user AND id_client=:client AND id_semester=:semester
+          AND ended_at IS NULL ORDER BY id DESC LIMIT 1')
+        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient, ':semester'=>(int)$idSemester))
+        ->queryRow();
+    if ($restoredSession && !empty($restoredSession['restored_at'])) {
+        $newPoints = $db->createCommand("SELECT COALESCE(SUM(category.points), 0)::int AS total
+            FROM t_logbook lb INNER JOIN m_action action ON action.id=lb.id_action
+            INNER JOIN m_action_category category ON category.id=lb.id_category
+            WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_semester=:semester
+              AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+              AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, ''))='verified')
+              AND (LOWER(COALESCE(action.identifier, ''))='morbiditas'
+                   OR LOWER(COALESCE(action.name, ''))='morbiditas' OR action.id=39)
+              AND lb.created_date >= :restored_at")
+            ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient,
+                ':semester'=>(int)$idSemester, ':restored_at'=>$restoredSession['restored_at']))->queryRow();
+        return (int)$restoredSession['points'] + (int)($newPoints['total'] ?? 0);
+    }
+    $milestoneStartedAt = $db->createCommand("SELECT lb.created_date
+        FROM t_logbook lb INNER JOIN m_action action ON action.id=lb.id_action
+        WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_semester=:semester
+          AND lb.deleted_at IS NULL AND action.is_milestone=true AND action.show_on_milestone=true
+          AND (LOWER(COALESCE(action.identifier,''))='stase' OR LOWER(COALESCE(action.name,''))='stase')
+        ORDER BY lb.created_date DESC,lb.id DESC LIMIT 1")
+        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient, ':semester'=>(int)$idSemester))
+        ->queryScalar();
+    if ($milestoneStartedAt && strtotime((string)$milestoneStartedAt) > strtotime((string)$startedAt)) {
+        $startedAt = $milestoneStartedAt;
+    }
+    $row = $db->createCommand("SELECT COALESCE(SUM(category.points), 0)::int AS total
+        FROM t_logbook lb
+        INNER JOIN m_action action ON action.id=lb.id_action
+        INNER JOIN m_action_category category ON category.id=lb.id_category
+        WHERE lb.id_user=:user AND lb.id_client=:client AND lb.id_semester=:semester
+          AND lb.deleted_at IS NULL AND category.points IS NOT NULL
+          AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, ''))='verified')
+          AND (LOWER(COALESCE(action.identifier, ''))='morbiditas'
+               OR LOWER(COALESCE(action.name, ''))='morbiditas' OR action.id=39)
+          AND lb.created_date >= :started_at")
+        ->bindValues(array(':user'=>(int)$idUser, ':client'=>(int)$idClient,
+            ':semester'=>(int)$idSemester, ':started_at'=>$startedAt))->queryRow();
+    return (int)($row['total'] ?? 0);
+}
+/* REPLACE existing method (Create + Edit). Preserve dates/boolean/role gates; Edit never changes profile/session. */
+private function webSaveStaseSemester($post, $isEdit)
+{
+    header('Content-Type: application/json; charset=utf-8');
+    if ($isEdit && is_array($post)) {
+        $post['created_by']=$post['updated_by'] ?? null;
+        if(!isset($post['id_logbook'])||!is_scalar($post['id_logbook'])||!preg_match('/^[1-9][0-9]*$/',(string)$post['id_logbook'])) {
+            echo json_encode(array('status'=>false,'message'=>'id_logbook wajib berupa ID positif')); Yii::app()->end();
+        }
+        $post['id']=$post['id_logbook'];
+    } elseif (is_array($post)) { unset($post['id']); }
+    if(is_array($post)&&isset($post['date'])&&is_string($post['date'])&&preg_match('/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/',$post['date'])) $post['date'].=' 00:00:00';
+    if (!is_array($post)) {
+        echo json_encode(array('status' => false, 'message' => 'Payload tidak valid'));
+        Yii::app()->end();
+    }
+
+    foreach (array('created_by', 'id_client', 'id_user', 'id_stase', 'id_stage', 'id_semester', 'date') as $field) {
+        if (!array_key_exists($field, $post) || $post[$field] === '' || $post[$field] === null) {
+            echo json_encode(array('status' => false, 'message' => $field . ' wajib diisi'));
+            Yii::app()->end();
+        }
+    }
+    foreach (array('created_by', 'id_client', 'id_user', 'id_stase', 'id_stage', 'id_semester') as $field) {
+        if (!preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
+            echo json_encode(array('status' => false, 'message' => $field . ' harus berupa ID positif'));
+            Yii::app()->end();
+        }
+    }
+    // Interpret offsetless mobile dates as WIB, not the PHP/DB session timezone.
+    // Explicit offsets (or Z) retain their instant; bind an offset on create AND edit.
+    $dateInput = $post['date'];
+    if (!is_string($dateInput) || !preg_match('/\A([0-9]{4})-([0-9]{2})-([0-9]{2})[ T]([0-9]{2}):([0-9]{2}):([0-9]{2})(Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))?\z/', $dateInput, $dateParts)) {
+        echo json_encode(array('status' => false, 'message' => 'date harus berformat YYYY-MM-DD HH:mm:ss, dengan offset opsional seperti +07:00 atau Z'));
+        Yii::app()->end();
+        return;
+    }
+    if (!checkdate((int)$dateParts[2], (int)$dateParts[3], (int)$dateParts[1])
+        || (int)$dateParts[4] > 23 || (int)$dateParts[5] > 59 || (int)$dateParts[6] > 59) {
+        echo json_encode(array('status' => false, 'message' => 'date tidak valid'));
+        Yii::app()->end();
+        return;
+    }
+    $dateText = substr($dateInput, 0, 10) . ' ' . substr($dateInput, 11, 8);
+    $dateOffset = isset($dateParts[7]) ? $dateParts[7] : '';
+    $dateFormat = '!Y-m-d H:i:s';
+    if ($dateOffset !== '') {
+        $dateText .= $dateOffset === 'Z' ? '+00:00' : $dateOffset;
+        $dateFormat .= 'P';
+    }
+    $parsedDate = DateTime::createFromFormat($dateFormat, $dateText, new DateTimeZone('Asia/Jakarta'));
+    $dateErrors = DateTime::getLastErrors();
+    if ($parsedDate === false || ($dateErrors !== false && ($dateErrors['warning_count'] > 0 || $dateErrors['error_count'] > 0))) {
+        echo json_encode(array('status' => false, 'message' => 'date tidak valid'));
+        Yii::app()->end();
+        return;
+    }
+    $dateValue = $parsedDate->format('Y-m-d H:i:sP');
+
+    $db = Yii::app()->dbPrasi;
+    $clientId = (int)$post['id_client'];
+    $actorId = (int)$post['created_by'];
+    $ppdsId = (int)$post['id_user'];
+    $staseId = (int)$post['id_stase'];
+    $stageId = (int)$post['id_stage'];
+    $semesterId = (int)$post['id_semester'];
+    $notes = isset($post['notes']) ? trim((string)$post['notes']) : null;
+    $notes = $notes === '' ? null : $notes;
+    $isRetake = filter_var(isset($post['is_retake']) ? $post['is_retake'] : false, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+    if ($isRetake === null) {
+        echo json_encode(array('status' => false, 'message' => 'is_retake harus boolean'));
+        Yii::app()->end();
+    }
+
+    $transaction = $db->beginTransaction();
+    try {
+        $this->webMorbiditasActor($db,$post);
+        $ppds = $db->createCommand("SELECT u.id, u.id_semester, u.id_stase FROM m_user u JOIN m_role r ON r.id=u.id_role
+            WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL
+              AND u.status='Active' AND u.is_show=true AND r.name='ppds' FOR UPDATE OF u")
+            ->bindValues(array(':id' => $ppdsId, ':client' => $clientId))->queryRow();
+        if (!$ppds) throw new RuntimeException('User PPDS tidak ditemukan untuk client ini');
+
+        $stase = $db->createCommand('SELECT id, id_stage FROM m_stase WHERE id=:id AND id_client=:client')
+            ->bindValues(array(':id' => $staseId, ':client' => $clientId))->queryRow();
+        $semester = $db->createCommand('SELECT id, id_stage FROM m_semester WHERE id=:id AND id_client=:client')
+            ->bindValues(array(':id' => $semesterId, ':client' => $clientId))->queryRow();
+        if (!$stase || !$semester || (int)$stase['id_stage'] !== $stageId || (int)$semester['id_stage'] !== $stageId) {
+            throw new RuntimeException('Stase dan Semester harus aktif pada Stage yang dipilih');
+        }
+
+        $action = $db->createCommand("SELECT id FROM m_action
+            WHERE id_client=:client AND is_milestone=true AND show_on_milestone=true
+              AND (lower(identifier)='stase' OR lower(name)='stase') LIMIT 1")
+            ->bindValue(':client', $clientId)->queryRow();
+        if (!$action) throw new RuntimeException('Action Stase milestone tidak ditemukan untuk client ini');
+
+        $now = date('Y-m-d H:i:s');
+        $id = isset($post['id']) && preg_match('/^[1-9][0-9]*$/', (string)$post['id']) ? (int)$post['id'] : null;
+
+        if ($id) {
+            $existing = $db->createCommand('SELECT id,id_user,id_stase,id_semester FROM t_logbook WHERE id=:id AND id_client=:client AND id_action=:action AND deleted_at IS NULL FOR UPDATE')
+                ->bindValues(array(':id' => $id, ':client' => $clientId, ':action' => (int)$action['id']))->queryRow();
+            if (!$existing) throw new RuntimeException('Milestone Stase tidak ditemukan');
+            if ((int)$existing['id_user']!==$ppdsId || (int)$existing['id_stase']!==$staseId || (int)$existing['id_semester']!==$semesterId) {
+                throw new RuntimeException('Edit tidak boleh mengubah PPDS, semester, atau Stase historis; buat transisi baru atau gunakan Undo');
+            }
+            // Bind boolean explicitly: Yii's array insert/update can serialize false as
+            // an empty string, which PostgreSQL rejects for a boolean column.
+            $command = $db->createCommand('UPDATE t_logbook SET
+                id_user=:id_user, id_stase=:id_stase, id_semester=:id_semester,
+                date=:date, notes=:notes, is_retake=:is_retake,
+                verified=true, verified_status=\'verified\',
+                updated_by=:updated_by, updated_date=:updated_date
+                WHERE id=:id AND id_client=:client');
+            $command->bindValue(':id_user', $ppdsId, PDO::PARAM_INT);
+            $command->bindValue(':id_stase', $staseId, PDO::PARAM_INT);
+            $command->bindValue(':id_semester', $semesterId, PDO::PARAM_INT);
+            $command->bindValue(':date', $dateValue, PDO::PARAM_STR);
+            $notes === null ? $command->bindValue(':notes', null, PDO::PARAM_NULL) : $command->bindValue(':notes', $notes, PDO::PARAM_STR);
+            $command->bindValue(':is_retake', $isRetake, PDO::PARAM_BOOL);
+            $command->bindValue(':updated_by', $actorId, PDO::PARAM_INT);
+            $command->bindValue(':updated_date', $now, PDO::PARAM_STR);
+            $command->bindValue(':id', $id, PDO::PARAM_INT);
+            $command->bindValue(':client', $clientId, PDO::PARAM_INT);
+            $changed=$command->execute();
+            if ($changed!==1) throw new RuntimeException('Milestone berubah; edit dibatalkan');
+        } else {
+            // `PDO::PARAM_BOOL` is required here; raw false became '' in the deployed
+            // Yii insert path and caused SQLSTATE[22P02].
+            $command = $db->createCommand('INSERT INTO t_logbook
+                (id_action, id_user, id_stase, id_semester, id_client, date, notes,
+                 is_retake, verified, verified_status, created_by, created_date)
+                VALUES (:id_action, :id_user, :id_stase, :id_semester, :id_client, :date, :notes,
+                        :is_retake, true, \'verified\', :created_by, :created_date)
+                RETURNING id');
+            $command->bindValue(':id_action', (int)$action['id'], PDO::PARAM_INT);
+            $command->bindValue(':id_user', $ppdsId, PDO::PARAM_INT);
+            $command->bindValue(':id_stase', $staseId, PDO::PARAM_INT);
+            $command->bindValue(':id_semester', $semesterId, PDO::PARAM_INT);
+            $command->bindValue(':id_client', $clientId, PDO::PARAM_INT);
+            $command->bindValue(':date', $dateValue, PDO::PARAM_STR);
+            $notes === null ? $command->bindValue(':notes', null, PDO::PARAM_NULL) : $command->bindValue(':notes', $notes, PDO::PARAM_STR);
+            $command->bindValue(':is_retake', $isRetake, PDO::PARAM_BOOL);
+            $command->bindValue(':created_by', $actorId, PDO::PARAM_INT);
+            $command->bindValue(':created_date', $now, PDO::PARAM_STR);
+            $created = $command->queryRow();
+            $id = (int)$created['id'];
+        }
+
+        // Perubahan semester adalah sesi baru, baik naik maupun turun yang disengaja.
+        // Snapshot poin sesi lama tetap tersimpan; sesi target selalu dimulai dari 0.
+        if (!$isEdit && (int)$ppds['id_semester'] !== $semesterId) {
+            $this->transitionMorbiditasPointsSession(
+                $db, $ppdsId, $clientId, (int)$ppds['id_semester'],
+                $ppds['id_stase'] !== null ? (int)$ppds['id_stase'] : null,
+                $semesterId, $staseId, $id
+            );
+        }
+
+        if (!$isEdit) {
+        $updatedProfile=$db->createCommand()->update('m_user', array(
+            'id_stase' => $staseId, 'id_semester' => $semesterId,
+            'updated_by' => $actorId, 'updated_date' => $now,
+        ), 'id=:id AND id_client=:client', array(':id' => $ppdsId, ':client' => $clientId));
+        if ($updatedProfile!==1) throw new RuntimeException('Profil PPDS tidak tersimpan');
+        }
+
+        $row = $db->createCommand('SELECT * FROM t_logbook WHERE id=:id AND id_client=:client')
+            ->bindValues(array(':id' => $id, ':client' => $clientId))->queryRow();
+        $transaction->commit();
+        echo json_encode(array('status' => true, 'message' => isset($post['id']) ? 'Milestone Stase berhasil diperbarui' : 'Milestone Stase berhasil dibuat', 'data' => $row));
+    } catch (Throwable $e) {
+        if ($transaction->active) $transaction->rollback();
+        echo json_encode(array('status' => false, 'message' => $e->getMessage()));
+    }
+    Yii::app()->end();
+}
+
+
+    
     
     public function actionUpdateMorbiditasVerifier() {
         header('Content-Type: application/json; charset=utf-8');
@@ -3150,283 +3612,78 @@ class ApiWebServiceController extends Controller {
     public function actionGetMorbiditasUndoInfo()
 {
     header('Content-Type: application/json; charset=utf-8');
-    $post = json_decode(file_get_contents('php://input'), true);
-
-    foreach (['created_by', 'id_client', 'id_user'] as $field) {
-        if (!is_array($post) || !isset($post[$field]) || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
-            echo json_encode(['status'=>false, 'message'=>$field.' wajib berupa ID positif']);
-            Yii::app()->end();
-        }
-    }
-
+    $post=json_decode(file_get_contents('php://input'),true);
+    $db=Yii::app()->dbPrasi; $tx=null;
     try {
-        $db = Yii::app()->dbPrasi;
-        $client = (int)$post['id_client'];
-        $user = (int)$post['id_user'];
-
-        $ppds = $db->createCommand(
-            "SELECT u.id, u.display_name, u.id_semester, u.id_stase
-             FROM m_user u JOIN m_role r ON r.id=u.id_role
-             WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL AND lower(r.name)='ppds'"
-        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
-
-        if (!$ppds) {
-            throw new RuntimeException('PPDS tidak ditemukan untuk client ini');
-        }
-
-        // Sesi aktif
-        $open = $db->createCommand(
-            'SELECT id, id_semester, id_stase, points, started_at
-             FROM t_morbiditas_points_history
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
-             ORDER BY id DESC LIMIT 1'
-        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
-
-        if (!$open) {
-            echo json_encode(['status'=>true, 'data'=>[
-                'id_user'=>$user, 'display_name'=>$ppds['display_name'],
-                'can_undo'=>false, 'reason'=>'Belum ada sesi poin aktif'
-            ]]);
-            Yii::app()->end();
-        }
-
-        // Hitung poin aktif sesi ini (binding-based)
-        $currentPoints = (int)$db->createCommand(
-            "SELECT COALESCE(SUM(category.points), 0)::int
-             FROM t_logbook lb
-             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
-             INNER JOIN m_action_category category ON category.id=lb.id_category
-             WHERE lb.id_morbiditas_period=:session_id
-               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
-               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
-               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
-                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
-        )->bindValue(':session_id', (int)$open['id'])->queryScalar();
-
-        // Sesi sebelumnya (closed)
-        $closed = $db->createCommand(
-            'SELECT id, id_semester, id_stase, points, started_at
-             FROM t_morbiditas_points_history
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NOT NULL
-             ORDER BY ended_at DESC, id DESC LIMIT 1'
-        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
-
-        $currentName = $db->createCommand(
-            'SELECT name FROM m_semester WHERE id=:id AND id_client=:client'
-        )->bindValues([':id'=>(int)$open['id_semester'], ':client'=>$client])->queryScalar();
-
-        $base = [
-            'id_user'=>$user,
-            'display_name'=>$ppds['display_name'],
-            'current_semester_id'=>(int)$open['id_semester'],
-            'current_semester_name'=>$currentName ?: null,
-            'current_active_points'=>$currentPoints,
-            'can_undo'=>false,
-        ];
-
-        if (!$closed) {
-            echo json_encode(['status'=>true, 'data'=>$base + ['reason'=>'Belum ada riwayat ganti semester']]);
-            Yii::app()->end();
-        }
-
-        $restorePoints = (int)$closed['points'];
-
-        // Hitung poin binding-based untuk sesi yang akan di-restore
-        $boundPoints = (int)$db->createCommand(
-            "SELECT COALESCE(SUM(category.points), 0)::int
-             FROM t_logbook lb
-             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
-             INNER JOIN m_action_category category ON category.id=lb.id_category
-             WHERE lb.id_morbiditas_period=:session_id
-               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
-               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
-               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
-                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
-        )->bindValue(':session_id', (int)$closed['id'])->queryScalar();
-
-        // Gunakan yang lebih besar: snapshot lama atau binding-based
-        if ($boundPoints > $restorePoints) {
-            $restorePoints = $boundPoints;
-        }
-
-        $restore = $db->createCommand(
-            'SELECT sem.name AS semester_name, st.name AS stase_name,
-                    sem.id_stage, stage.name AS stage_name
-             FROM m_semester sem
-             LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client
-             LEFT JOIN m_stage stage ON stage.id=sem.id_stage
-             WHERE sem.id=:semester AND sem.id_client=:client'
-        )->bindValues([
-            ':semester'=>(int)$closed['id_semester'],
-            ':stase'=>$closed['id_stase'],
-            ':client'=>$client,
-        ])->queryRow();
-
-        $canUndo = $currentPoints === 0;
-        $reason = $canUndo ? null : 'Undo dikunci: sesi sekarang sudah memiliki poin aktif.';
-
-        echo json_encode(['status'=>true, 'data'=>array_merge($base, [
-            'can_undo'=>$canUndo,
-            'reason'=>$reason,
-            'restore_session_id'=>(int)$closed['id'],
-            'restore_semester_id'=>(int)$closed['id_semester'],
-            'restore_semester_name'=>$restore['semester_name'] ?? null,
-            'restore_stase_id'=>$closed['id_stase'] !== null ? (int)$closed['id_stase'] : null,
-            'restore_stase_name'=>$restore['stase_name'] ?? null,
-            'restore_stage_id'=>isset($restore['id_stage']) ? (int)$restore['id_stage'] : null,
-            'restore_stage_name'=>$restore['stage_name'] ?? null,
-            'restore_points'=>$restorePoints,
-        ])]);
-    } catch (Exception $e) {
-        echo json_encode(['status'=>false, 'message'=>$e->getMessage()]);
+        $tx=$db->beginTransaction();
+        $context=$this->morbiditasSemesterUndoContext($db,$post);
+        $tx->commit();
+        echo json_encode(array('status'=>true,'data'=>$context['info']));
+    } catch (Throwable $e) {
+        if ($tx!==null && $tx->active) $tx->rollback();
+        echo json_encode(array('status'=>false,'message'=>$e->getMessage()));
     }
     Yii::app()->end();
 }
 
+
 public function actionUndoMorbiditasStase()
 {
     header('Content-Type: application/json; charset=utf-8');
-    $post = json_decode(file_get_contents('php://input'), true);
-
-    foreach (['created_by', 'id_client', 'id_user'] as $field) {
-        if (!is_array($post) || !isset($post[$field]) || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
-            echo json_encode(['status'=>false, 'message'=>$field.' wajib berupa ID positif']);
-            Yii::app()->end();
-        }
-    }
-
-    $db = Yii::app()->dbPrasi;
-    $client = (int)$post['id_client'];
-    $actor = (int)$post['created_by'];
-    $user = (int)$post['id_user'];
-    $tx = $db->beginTransaction();
-
+    $post=json_decode(file_get_contents('php://input'),true);
+    $db=Yii::app()->dbPrasi; $tx=null;
     try {
-        // Lock PPDS
-        $ppds = $db->createCommand(
-            "SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role
-             WHERE u.id=:user AND u.id_client=:client AND u.deleted_at IS NULL
-               AND lower(r.name)='ppds' FOR UPDATE OF u"
-        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
-
-        if (!$ppds) throw new RuntimeException('PPDS tidak ditemukan');
-
-        // Sesi aktif
-        $open = $db->createCommand(
-            'SELECT id, id_semester, id_stase, started_at
-             FROM t_morbiditas_points_history
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
-             ORDER BY id DESC LIMIT 1 FOR UPDATE'
-        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
-
-        if (!$open) throw new RuntimeException('Tidak ada sesi aktif untuk di-Undo');
-
-        // Cek poin aktif — harus 0
-        $currentPoints = (int)$db->createCommand(
-            "SELECT COALESCE(SUM(category.points), 0)::int
-             FROM t_logbook lb
-             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
-             INNER JOIN m_action_category category ON category.id=lb.id_category
-             WHERE lb.id_morbiditas_period=:session_id
-               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
-               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
-               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
-                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
-        )->bindValue(':session_id', (int)$open['id'])->queryScalar();
-
-        if ($currentPoints !== 0) {
-            throw new RuntimeException('Undo ditolak: sesi sekarang sudah memiliki poin aktif');
+        foreach (array('expected_current_session_id','expected_restore_session_id','id_logbook') as $field) {
+            if (!is_array($post) || !isset($post[$field]) || !is_scalar($post[$field])
+                || !preg_match('/^[1-9][0-9]*$/',(string)$post[$field])) {
+                throw new RuntimeException($field.' wajib dari preview terbaru; Refresh status Undo');
+            }
         }
-
-        // Sesi sebelumnya (closed)
-        $restore = $db->createCommand(
-            'SELECT id, id_semester, id_stase, points, started_at
-             FROM t_morbiditas_points_history
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NOT NULL
-             ORDER BY ended_at DESC, id DESC LIMIT 1 FOR UPDATE'
-        )->bindValues([':user'=>$user, ':client'=>$client])->queryRow();
-
-        if (!$restore) throw new RuntimeException('Tidak ada sesi sebelumnya untuk di-Undo');
-
-        $restoreStase = $restore['id_stase'] !== null ? (int)$restore['id_stase'] : null;
-
-        // Tutup sesi aktif dengan poin 0
-        $db->createCommand(
-            'UPDATE t_morbiditas_points_history SET points=0, ended_at=CURRENT_TIMESTAMP
-             WHERE id=:id AND ended_at IS NULL'
-        )->bindValue(':id', (int)$open['id'])->execute();
-
-        // Buka kembali sesi sebelumnya
-        $db->createCommand(
-            'UPDATE t_morbiditas_points_history SET ended_at=NULL, restored_at=CURRENT_TIMESTAMP
-             WHERE id=:id AND ended_at IS NOT NULL'
-        )->bindValue(':id', (int)$restore['id'])->execute();
-
-        // Update m_user
-        $now = date('Y-m-d H:i:s');
-        $db->createCommand(
-            "UPDATE m_user SET id_semester=:semester, id_stase=:stase,
-                    updated_by=:actor, updated_date=:now
-             WHERE id=:id AND id_client=:client"
-        )->bindValues([
-            ':semester' => (int)$restore['id_semester'],
-            ':stase'    => $restoreStase,
-            ':actor'    => $actor,
-            ':now'      => $now,
-            ':id'       => $user,
-            ':client'   => $client,
-        ])->execute();
-
-        // Hitung poin restore
-        $restorePoints = (int)$db->createCommand(
-            "SELECT COALESCE(SUM(category.points), 0)::int
-             FROM t_logbook lb
-             INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
-             INNER JOIN m_action_category category ON category.id=lb.id_category
-             WHERE lb.id_morbiditas_period=:session_id
-               AND lb.deleted_at IS NULL AND category.points IS NOT NULL
-               AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
-               AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
-                    OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
-        )->bindValue(':session_id', (int)$restore['id'])->queryScalar();
-
-        // Jika snapshot lama lebih tinggi, pakai itu
-        if ((int)$restore['points'] > $restorePoints) {
-            $restorePoints = (int)$restore['points'];
+        $tx=$db->beginTransaction();
+        $context=$this->morbiditasSemesterUndoContext($db,$post,true);
+        $open=$context['open']; $restore=$context['restore']; $info=$context['info'];
+        if ((int)$post['expected_current_session_id']!==(int)$open['id']
+            || (int)$post['expected_restore_session_id']!==(int)$restore['id']) {
+            throw new RuntimeException('Sesi sudah berubah sejak preview; Refresh status Undo');
         }
-
-        $names = $db->createCommand(
-            'SELECT sem.name AS semester_name, st.name AS stase_name,
-                    sem.id_stage, stage.name AS stage_name
-             FROM m_semester sem
-             LEFT JOIN m_stase st ON st.id=:stase AND st.id_client=:client
-             LEFT JOIN m_stage stage ON stage.id=sem.id_stage
-             WHERE sem.id=:semester AND sem.id_client=:client'
-        )->bindValues([
-            ':semester'=>(int)$restore['id_semester'],
-            ':stase'=>$restoreStase,
-            ':client'=>$client,
-        ])->queryRow();
-
+        if (!$info['can_undo']) throw new RuntimeException($info['reason']);
+        $scope=array(':user'=>(int)$post['id_user'],':client'=>(int)$post['id_client']);
+        $changed=$db->createCommand('UPDATE t_morbiditas_points_history SET points=0,ended_at=CURRENT_TIMESTAMP,undone_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at IS NULL AND undone_at IS NULL')
+            ->bindValues($scope+array(':id'=>(int)$open['id']))->execute();
+        if ($changed!==1) throw new RuntimeException('Sesi aktif berubah; Undo dibatalkan');
+        $boundAtRestore=$this->morbiditasSemesterUndoBoundPoints($db,(int)$post['id_user'],(int)$post['id_client'],(int)$restore['id']);
+        $changed=$db->createCommand('UPDATE t_morbiditas_points_history SET ended_at=NULL,restored_at=CURRENT_TIMESTAMP,
+            restored_after_logbook_id=(SELECT COALESCE(MAX(id),0) FROM t_logbook),restored_bound_points=:bound
+            WHERE id=:id AND id_user=:user AND id_client=:client AND ended_at IS NOT NULL AND undone_at IS NULL')
+            ->bindValues($scope+array(':id'=>(int)$restore['id'],':bound'=>$boundAtRestore))->execute();
+        if ($changed!==1) throw new RuntimeException('Sesi pemulihan berubah; Undo dibatalkan');
+        $changed=$db->createCommand('UPDATE m_user SET id_semester=:semester,id_stase=:stase,updated_by=:actor,updated_date=CURRENT_TIMESTAMP
+            WHERE id=:user AND id_client=:client AND id_semester=:current_semester AND id_stase IS NOT DISTINCT FROM :current_stase AND deleted_at IS NULL')
+            ->bindValues($scope+array(':semester'=>(int)$restore['id_semester'],':stase'=>$restore['id_stase'],':actor'=>(int)$post['created_by'],
+                ':current_semester'=>(int)$open['id_semester'],':current_stase'=>$open['id_stase']))->execute();
+        if ($changed!==1) throw new RuntimeException('Profil PPDS berubah; Undo dibatalkan');
+        $changed=$db->createCommand('UPDATE t_logbook SET deleted_at=CURRENT_TIMESTAMP,updated_by=:actor,updated_date=CURRENT_TIMESTAMP
+            WHERE id=:id AND id_user=:user AND id_client=:client AND deleted_at IS NULL
+              AND id_semester=:semester AND id_stase IS NOT DISTINCT FROM :stase')
+            ->bindValues($scope+array(':id'=>$info['archive_logbook_id'],':actor'=>(int)$post['created_by'],
+                ':semester'=>(int)$open['id_semester'],':stase'=>$open['id_stase']))->execute();
+        if ($changed!==1) throw new RuntimeException('Milestone transisi berubah; Undo dibatalkan');
+        // Read back every mutated target before committing; no old card or child/activity row is touched.
+        $check=$db->createCommand('SELECT lb.deleted_at FROM t_logbook lb WHERE lb.id=:id AND lb.id_user=:user AND lb.id_client=:client')
+            ->bindValues($scope+array(':id'=>$info['archive_logbook_id']))->queryRow();
+        if (!$check || empty($check['deleted_at'])) throw new RuntimeException('Arsip transisi tidak terkonfirmasi');
+        $total=$this->calculateMorbiditasSessionPoints($db,(int)$post['id_user'],(int)$post['id_client'],(int)$restore['id_semester'],$restore['started_at']);
+        if ($total!==(int)$restore['points']) throw new RuntimeException('Snapshot pemulihan tidak konsisten; Undo dibatalkan');
         $tx->commit();
-
-        echo json_encode([
-            'status'=>true,
-            'message'=>'Semester, Stase, dan poin Morbiditas berhasil dikembalikan',
-            'data'=>[
-                'id_user'=>$user,
-                'id_semester'=>(int)$restore['id_semester'],
-                'semester_name'=>$names['semester_name'] ?? null,
-                'id_stase'=>$restoreStase,
-                'stase_name'=>$names['stase_name'] ?? null,
-                'id_stage'=>isset($names['id_stage']) ? (int)$names['id_stage'] : null,
-                'stage_name'=>$names['stage_name'] ?? null,
-                'total_points'=>$restorePoints,
-            ],
-        ]);
-    } catch (Exception $e) {
-        if ($tx->active) $tx->rollback();
-        echo json_encode(['status'=>false, 'message'=>$e->getMessage()]);
+        echo json_encode(array('status'=>true,'message'=>'Semester, Stase, dan sesi poin dipulihkan; milestone transisi terakhir diarsipkan.',
+            'data'=>array('id_user'=>(int)$post['id_user'],'id_semester'=>(int)$restore['id_semester'],
+                'id_stase'=>$info['restore_stase_id'],'semester_name'=>$info['restore_semester_name'],
+                'stase_name'=>$info['restore_stase_name'],'id_stage'=>$info['restore_stage_id'],'stage_name'=>$info['restore_stage_name'],
+                'total_points'=>$total,'active_session_id'=>(int)$restore['id'],'archived_logbook_id'=>$info['archive_logbook_id'])));
+    } catch (Throwable $e) {
+        if ($tx!==null && $tx->active) $tx->rollback();
+        echo json_encode(array('status'=>false,'message'=>$e->getMessage()));
     }
     Yii::app()->end();
 }
@@ -4203,269 +4460,70 @@ public function actionUndoMorbiditasStase()
         ]);
     }
 
-    public function actionRemoveStase() {
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-        
-        if (!isset($post['id_logbook'])) {
-            echo json_encode([
-                'status' => false,
-                'message' => 'Invalid parameter!'
-            ]);
+    public function actionRemoveStase()
+{
+    header('Content-Type: application/json; charset=utf-8');
+    $post = json_decode(file_get_contents('php://input'), true);
+    foreach (array('id_logbook', 'created_by', 'id_client') as $field) {
+        if (!is_array($post) || !isset($post[$field]) || !preg_match('/^[1-9][0-9]*$/', (string)$post[$field])) {
+            echo json_encode(array('status' => false, 'message' => $field . ' wajib berupa ID positif'));
             Yii::app()->end();
         }
-        
-        try {
-            $logbook = TLogbook::model()->findByPk($post["id_logbook"]);
-            
-            if (!$logbook) {
-                echo json_encode([
-                    'status'  => false,
-                    'message' => 'User tidak ditemukan!'
-                ]);
-                Yii::app()->end();
-            }
-            
-            $logbook->deleted_at = new CDbExpression('NOW()');
-            $logbook->save(false);
-
-            echo json_encode([
-                'status' => true,
-                'message' => 'Data berhasil dihapus!'
-            ]);
-        
-        } catch (Exception $e) {
-            echo json_encode([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ]);
-        }
-        Yii::app()->end();
-    }
-
-    public function actionCreateStase()
-{
-    $rest_json = file_get_contents("php://input");
-    $post = json_decode($rest_json, true);
-
-    if (
-        !isset($post['id_client']) ||
-        !isset($post['created_by']) ||
-        !isset($post['id_user']) ||
-        !isset($post['id_stase']) ||
-        !isset($post['id_semester']) ||
-        !isset($post['date'])
-    ) {
-        echo json_encode([
-            'status'  => false,
-            'message' => 'Invalid parameter!'
-        ]);
-        Yii::app()->end();
     }
 
     $db = Yii::app()->dbPrasi;
-    $tx = $db->beginTransaction();
+    $id = (int)$post['id_logbook'];
+    $actorId = (int)$post['created_by'];
+    $clientId = (int)$post['id_client'];
+    $transaction = $db->beginTransaction();
     try {
-        $clientId = (int)$post['id_client'];
-        $actorId = (int)$post['created_by'];
-        $ppdsId = (int)$post['id_user'];
-        $staseId = (int)$post['id_stase'];
-        $semesterId = (int)$post['id_semester'];
+        $this->webMorbiditasActor($db,$post);
+        $owner=$db->createCommand('SELECT id_user FROM t_logbook WHERE id=:id AND id_client=:client AND deleted_at IS NULL')
+            ->bindValues(array(':id'=>$id,':client'=>$clientId))->queryRow();
+        if (!$owner) throw new RuntimeException('Milestone Stase tidak ditemukan');
+        $locked=$db->createCommand('SELECT id FROM m_user WHERE id=:user AND id_client=:client AND deleted_at IS NULL FOR UPDATE')
+            ->bindValues(array(':user'=>(int)$owner['id_user'],':client'=>$clientId))->queryRow();
+        if (!$locked) throw new RuntimeException('PPDS tidak ditemukan');
+        $linked=$db->createCommand('SELECT id FROM t_morbiditas_points_history WHERE transition_logbook_id=:id AND id_user=:user AND id_client=:client LIMIT 1')
+            ->bindValues(array(':id'=>$id,':user'=>(int)$owner['id_user'],':client'=>$clientId))->queryRow();
+        if ($linked) throw new RuntimeException('Milestone pembentuk sesi tidak boleh dihapus terpisah; gunakan Undo semester');
+        $milestone = $db->createCommand("SELECT lb.id FROM t_logbook lb
+            JOIN m_action a ON a.id=lb.id_action AND a.id_client=lb.id_client
+            WHERE lb.id=:id AND lb.id_client=:client AND lb.deleted_at IS NULL
+              AND a.is_milestone=true AND a.show_on_milestone=true
+              AND (lower(a.identifier)='stase' OR lower(a.name)='stase')
+            FOR UPDATE OF lb")
+            ->bindValues(array(':id' => $id, ':client' => $clientId))->queryRow();
+        if (!$milestone) throw new RuntimeException('Milestone Stase tidak ditemukan');
 
-        // Cari action stase
-        $action = $db->createCommand(
-            "SELECT id FROM m_action WHERE id_client=:client
-             AND (lower(identifier)='stase' OR lower(name)='stase')
-             AND is_milestone=true AND show_on_milestone=true LIMIT 1"
-        )->bindValue(':client', $clientId)->queryRow();
-
-        if (!$action) {
-            throw new RuntimeException('Action "stase" not found for the client!');
-        }
-
-        // Lock PPDS row untuk mencegah concurrent create
-        $ppds = $db->createCommand(
-            "SELECT u.id, u.id_semester, u.id_stase FROM m_user u
-             JOIN m_role r ON r.id=u.id_role
-             WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL
-               AND u.status='Active' AND lower(r.name)='ppds'
-             FOR UPDATE OF u"
-        )->bindValues([':id'=>$ppdsId, ':client'=>$clientId])->queryRow();
-
-        if (!$ppds) {
-            throw new RuntimeException('User PPDS tidak ditemukan untuk client ini');
-        }
-
-        $now = date('Y-m-d H:i:s');
-
-        // INSERT milestone stase
-        $logbookId = $db->createCommand(
-            "INSERT INTO t_logbook
-             (id_action,id_user,id_stase,id_semester,id_client,date,notes,is_retake,
-              verified,verified_status,created_by,created_date)
-             VALUES (:action,:user,:stase,:semester,:client,:date,:notes,:retake,
-                     true,'verified',:created_by,:created_date)
-             RETURNING id"
-        )->bindValues([
-            ':action'   => (int)$action['id'],
-            ':user'     => $ppdsId,
-            ':stase'    => $staseId,
-            ':semester' => $semesterId,
-            ':client'   => $clientId,
-            ':date'     => $post['date'],
-            ':notes'    => isset($post['notes']) && trim((string)$post['notes']) !== '' ? trim((string)$post['notes']) : null,
-            ':retake'   => filter_var($post['is_retake'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false',
-            ':created_by'   => $actorId,
-            ':created_date' => $now,
-        ])->queryScalar();
-
-        if (!$logbookId) {
-            throw new RuntimeException('Gagal membuat milestone Stase');
-        }
-
-        // === MORBIDITAS PERIOD TRANSITION ===
-        // Transition hanya terjadi saat SEMESTER berubah, sama seperti Mobile.
-        // Jika hanya stase yang berubah (semester tetap), poin aktif tidak direset.
-        if ((int)$ppds['id_semester'] !== $semesterId) {
-
-        // Cari sesi aktif (ended_at IS NULL) untuk PPDS ini
-        $openSession = $db->createCommand(
-            'SELECT id, id_semester, id_stase, started_at, points
-             FROM t_morbiditas_points_history
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
-             ORDER BY id DESC LIMIT 1 FOR UPDATE'
-        )->bindValues([':user'=>$ppdsId, ':client'=>$clientId])->queryRow();
-
-        if ($openSession) {
-            // Hitung poin aktif dari Morbiditas terikat sesi ini
-            $currentPoints = $db->createCommand(
-                "SELECT COALESCE(SUM(category.points), 0)::int AS total
-                 FROM t_logbook lb
-                 INNER JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
-                 INNER JOIN m_action_category category ON category.id=lb.id_category
-                 WHERE lb.id_morbiditas_period=:session_id
-                   AND lb.deleted_at IS NULL AND category.points IS NOT NULL
-                   AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status,''))='verified')
-                   AND (LOWER(COALESCE(ma.identifier,''))='morbiditas'
-                        OR LOWER(COALESCE(ma.name,''))='morbiditas' OR ma.id=39)"
-            )->bindValue(':session_id', (int)$openSession['id'])->queryScalar();
-
-            // Tutup sesi lama: simpan snapshot poin
-            $db->createCommand(
-                'UPDATE t_morbiditas_points_history
-                 SET points=:points, id_stase=COALESCE(:stase, id_stase),
-                     ended_at=CURRENT_TIMESTAMP
-                 WHERE id=:id AND ended_at IS NULL'
-            )->bindValues([
-                ':points' => (int)$currentPoints,
-                ':stase'  => (int)$ppds['id_stase'],
-                ':id'     => (int)$openSession['id'],
-            ])->execute();
-        }
-
-        // Pastikan tidak ada sesi terbuka lain (safety)
-        $db->createCommand(
-            'UPDATE t_morbiditas_points_history SET ended_at=CURRENT_TIMESTAMP
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL'
-        )->bindValues([':user'=>$ppdsId, ':client'=>$clientId])->execute();
-
-        // Buka sesi baru dengan poin 0 (seq diisi otomatis oleh trigger)
-        $db->createCommand(
-            "INSERT INTO t_morbiditas_points_history
-             (id_user,id_client,id_semester,id_stase,points,started_at,ended_at)
-             VALUES (:user,:client,:semester,:stase,0,CURRENT_TIMESTAMP,NULL)"
-        )->bindValues([
-            ':user'     => $ppdsId,
-            ':client'   => $clientId,
-            ':semester' => $semesterId,
-            ':stase'    => $staseId,
-        ])->execute();
-        } // end if semester berubah
-
-        // Update m_user: semester dan stase saat ini
-        $db->createCommand(
-            "UPDATE m_user SET id_semester=:semester, id_stase=:stase,
-                    updated_by=:actor, updated_date=:now
-             WHERE id=:id AND id_client=:client"
-        )->bindValues([
-            ':semester' => $semesterId,
-            ':stase'    => $staseId,
-            ':actor'    => $actorId,
-            ':now'      => $now,
-            ':id'       => $ppdsId,
-            ':client'   => $clientId,
-        ])->execute();
-
-        $tx->commit();
-
-        echo json_encode([
-            'status'  => true,
-            'message' => 'Stase berhasil dibuat dan periode Morbiditas diperbarui!',
-        ]);
-    } catch (Exception $e) {
-        if ($tx->active) $tx->rollback();
-        echo json_encode([
-            'status'  => false,
-            'message' => $e->getMessage()
-        ]);
+        $archived=$db->createCommand()->update('t_logbook', array(
+            'deleted_at' => date('Y-m-d H:i:s'),
+            'updated_by' => $actorId,
+            'updated_date' => date('Y-m-d H:i:s'),
+        ), 'id=:id AND id_client=:client AND deleted_at IS NULL', array(':id' => $id, ':client' => $clientId));
+        if ($archived!==1) throw new RuntimeException('Milestone berubah; arsip dibatalkan');
+        $transaction->commit();
+        echo json_encode(array('status' => true, 'message' => 'Milestone Stase berhasil diarsipkan', 'data' => array('id' => $id)));
+    } catch (Throwable $e) {
+        if ($transaction->active) $transaction->rollback();
+        echo json_encode(array('status' => false, 'message' => $e->getMessage()));
     }
     Yii::app()->end();
 }
 
+    public function actionCreateStase()
+{
+    $post=json_decode(file_get_contents('php://input'),true);
+    $this->webSaveStaseSemester($post,false);
+}
+
+
 
     public function actionUpdateStase()
-    {
-        $rest_json = file_get_contents("php://input");
-        $post = json_decode($rest_json, true);
-
-        if (
-            !isset($post['id_logbook']) ||
-            !isset($post['updated_by']) ||
-            !isset($post['id_user']) ||
-            !isset($post['id_stase']) ||
-            !isset($post['id_semester']) ||
-            !isset($post['date'])
-        ) {
-            echo json_encode([
-                'status'  => false,
-                'message' => 'Invalid parameter!'
-            ]);
-            Yii::app()->end();
-        }
-
-        $logbook = TLogbook::model()->findByPk($post['id_logbook']);
-
-        if (!$logbook) {
-            echo json_encode([
-                'status'  => false,
-                'message' => 'Data tidak ditemukan!'
-            ]);
-            Yii::app()->end();
-        }
-
-        try {
-            $logbook->id_user      = $post['id_user'];
-            $logbook->id_stase     = $post['id_stase'];
-            $logbook->id_semester  = $post['id_semester'];
-            $logbook->date         = $post['date'];
-            $logbook->notes        = $post['notes'] ?? null;
-            $logbook->is_retake    = $post['is_retake'] ?? false;
-            $logbook->updated_date = date('Y-m-d H:i:s');
-            $logbook->updated_by   = $post['updated_by'];
-            $logbook->save(false);
-
-            echo json_encode([
-                'status'  => true,
-                'message' => 'Data berhasil diupdate!',
-            ]);
-        } catch (Exception $e) {
-            echo json_encode([
-                'status'  => false,
-                'message' => $e->getMessage()
-            ]);
-        }
-        Yii::app()->end();
-    }
+{
+    $post=json_decode(file_get_contents('php://input'),true);
+    $this->webSaveStaseSemester($post,true);
+}
     // === STASE STAGE ===
 
 
