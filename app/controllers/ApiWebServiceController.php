@@ -2402,7 +2402,7 @@ class ApiWebServiceController extends Controller {
     $sort = isset($post['sort']) && strtolower((string)$post['sort']) === 'asc' ? 'ASC' : 'DESC';
 
     try {
-        $db = Yii::app()->dbPrasi;
+        $db = Yii::app()->db;
 
         $baseSql = "
             SELECT
@@ -3041,7 +3041,7 @@ private function webMorbiditasActor($db,$post)
         if(!is_array($post)||!isset($post[$key])||!is_scalar($post[$key])||!preg_match('/^[1-9][0-9]*$/',(string)$post[$key]))
             throw new RuntimeException($key.' wajib berupa ID positif');
     }
-    // actionLogin returns mu.id/id_client/role from Yii::app()->db, NOT dbPrasi.
+    // actionLogin returns mu.id/id_client/role from Yii::app()->db, NOT db.
     // Never resolve this ID against a different database or fall back to a same-ID PPDS/Staff.
     // Institution status permits Active or legacy NULL/blank, not other statuses.
     // is_show is display-only for Institution; PPDS visibility checks stay unchanged.
@@ -3051,8 +3051,8 @@ private function webMorbiditasActor($db,$post)
         AND lower(r.name)='institution'
         AND lower(btrim(coalesce(u.status,''))) IN ('','active')")
         ->bindValues(array(':actor'=>(int)$post['created_by'],':client'=>(int)$post['id_client']))->queryRow();
-    if(!$actor) throw new RuntimeException('Aktor Institution tidak valid pada database login (db): periksa created_by/id_client, role, deleted_at, status nonaktif/tidak dikenal; login ulang jika sesi lama. ID dbPrasi tidak dipakai sebagai pengganti identitas login.');
-    // Data/session schema still belongs to dbPrasi (the caller's transaction).
+    if(!$actor) throw new RuntimeException('Aktor Institution tidak valid pada database login (db): periksa created_by/id_client, role, deleted_at, status nonaktif/tidak dikenal; login ulang jika sesi lama. ID db tidak dipakai sebagai pengganti identitas login.');
+    // Data/session schema still belongs to db (the caller's transaction).
     $columns=$db->createCommand("SELECT column_name FROM information_schema.columns
         WHERE table_schema=current_schema() AND table_name='t_morbiditas_points_history'") ->queryAll();
     $present=array_column($columns,'column_name');
@@ -3363,7 +3363,7 @@ private function webSaveStaseSemester($post, $isEdit)
     }
     $dateValue = $parsedDate->format('Y-m-d H:i:sP');
 
-    $db = Yii::app()->dbPrasi;
+    $db = Yii::app()->db;
     $clientId = (int)$post['id_client'];
     $actorId = (int)$post['created_by'];
     $ppdsId = (int)$post['id_user'];
@@ -3613,7 +3613,7 @@ private function webSaveStaseSemester($post, $isEdit)
 {
     header('Content-Type: application/json; charset=utf-8');
     $post=json_decode(file_get_contents('php://input'),true);
-    $db=Yii::app()->dbPrasi; $tx=null;
+    $db=Yii::app()->db; $tx=null;
     try {
         $tx=$db->beginTransaction();
         $context=$this->morbiditasSemesterUndoContext($db,$post);
@@ -3631,7 +3631,7 @@ public function actionUndoMorbiditasStase()
 {
     header('Content-Type: application/json; charset=utf-8');
     $post=json_decode(file_get_contents('php://input'),true);
-    $db=Yii::app()->dbPrasi; $tx=null;
+    $db=Yii::app()->db; $tx=null;
     try {
         foreach (array('expected_current_session_id','expected_restore_session_id','id_logbook') as $field) {
             if (!is_array($post) || !isset($post[$field]) || !is_scalar($post[$field])
@@ -4471,7 +4471,7 @@ public function actionUndoMorbiditasStase()
         }
     }
 
-    $db = Yii::app()->dbPrasi;
+    $db = Yii::app()->db;
     $id = (int)$post['id_logbook'];
     $actorId = (int)$post['created_by'];
     $clientId = (int)$post['id_client'];
