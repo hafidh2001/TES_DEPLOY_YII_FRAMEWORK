@@ -6374,7 +6374,7 @@ public function actionUndoMorbiditasStase()
         ";
     
         if (!empty($post['staff'])) {
-            $sql .= " AND vl.staff = :staff";
+            $sql .= " AND TRIM(vl.staff) = :staff";
         }
     
         $sql .= " LIMIT 1";
@@ -6384,7 +6384,7 @@ public function actionUndoMorbiditasStase()
         $command->bindValue(':id', $post['id'], PDO::PARAM_INT);
     
         if (!empty($post['staff'])) {
-            $command->bindValue(':staff', $post['staff'], PDO::PARAM_STR);
+            $command->bindValue(':staff', trim($post['staff']), PDO::PARAM_STR);
         }
     
         $data = $command->queryRow();
