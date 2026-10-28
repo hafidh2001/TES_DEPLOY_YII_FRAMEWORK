@@ -30,6 +30,48 @@ class ApiMobileServiceController extends Controller {
  * deliberate return to a previous semester therefore remains 0 until new
  * verified Morbiditas records are created in that new session.
  */
+ 
+ protected function beforeAction($action)
+{
+    // Stateless Mobile API: same uncredentialed origin policy as this controller.
+    // Never use credentials/cookies with the wildcard origin.
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, Accept');
+    header('Access-Control-Expose-Headers: X-Prasi-Upload-Contract, X-Prasi-Upload-Groups');
+    header('Access-Control-Max-Age: 600');
+
+    $method = isset($_SERVER['REQUEST_METHOD'])
+        ? strtoupper(trim((string) $_SERVER['REQUEST_METHOD']))
+        : '';
+
+    if ($method === 'OPTIONS') {
+        $requestedMethod = isset($_SERVER['HTTP_ACCESS_CONTROL_REQUEST_METHOD'])
+            ? strtoupper(trim((string) $_SERVER['HTTP_ACCESS_CONTROL_REQUEST_METHOD']))
+            : '';
+
+        if ($requestedMethod !== '' && !in_array($requestedMethod, array('GET', 'POST', 'OPTIONS'), true)) {
+            header('Allow: GET, POST, OPTIONS');
+            header('Content-Length: 0');
+            http_response_code(405);
+            Yii::app()->end();
+            return false;
+        }
+
+        // An OPTIONS request is never a metadata read or a business mutation.
+        // End before action payload parsing, DB acquisition or transactions.
+        header('Allow: GET, POST, OPTIONS');
+        header('Content-Length: 0');
+        http_response_code(204);
+        Yii::app()->end();
+        return false;
+    }
+
+    // Actual requests must still pass the inherited controller policy and filters.
+    return parent::beforeAction($action);
+}
+
+ 
 public function actionLogin()
 {
     header('Content-Type: application/json');
@@ -237,30 +279,67 @@ private function writeMobileAuditTrail($db, $post)
 public function actionGetProfile()
 {
     header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, private');
+    // Replace the existing actionGetProfile(), do not append a second method.
+    // Legacy Mobile membership contract, NOT token-based authentication.
+    // No new helper dependency and no database writes (including login/session writes).
     $post = json_decode(file_get_contents('php://input'), true);
-    if (!is_array($post) || !isset($post['id_user']) || !isset($post['id_client'])) {
-        echo json_encode(array('success' => false, 'message' => 'id_user dan id_client wajib diisi'));
-        Yii::app()->end();
+    $positiveId = function ($value) {
+        return (is_int($value) || is_string($value))
+            && preg_match('/^[1-9][0-9]*$/D', (string)$value)
+            && strlen((string)$value) <= 10 && (float)$value <= 2147483647;
+    };
+    foreach (array('id_user', 'id_client') as $field) {
+        if (!is_array($post) || !isset($post[$field]) || !$positiveId($post[$field])) {
+            echo json_encode(array('success'=>false, 'message'=>'id_user dan id_client harus berupa ID positif'));
+            Yii::app()->end();
+            return;
+        }
     }
-
     $idUser = (int)$post['id_user'];
     $idClient = (int)$post['id_client'];
-
-    if ($idUser <= 0 || $idClient <= 0) {
-        echo json_encode(array('success' => false, 'message' => 'id_user dan id_client harus berupa ID positif'));
+    // Native/Web send their own actor, never a separate profile target.
+    // Retain older callers that omit created_by; this check is not authentication.
+    if (array_key_exists('created_by', $post)
+        && (!$positiveId($post['created_by']) || (int)$post['created_by'] !== $idUser)) {
+        echo json_encode(array('success'=>false, 'message'=>'Identitas profil tidak sesuai sesi'));
         Yii::app()->end();
+        return;
     }
-
+    $stage = 'connection';
+    $failure = function ($e) use (&$stage) {
+        $sqlstate = null;
+        for ($error = $e; $error !== null; $error = $error->getPrevious()) {
+            if (($error instanceof CDbException || $error instanceof PDOException)
+                && isset($error->errorInfo[0]) && is_string($error->errorInfo[0])
+                && preg_match('/^[A-Z0-9]{5}$/D', $error->errorInfo[0])) {
+                $sqlstate = $error->errorInfo[0];
+                break;
+            }
+        }
+        $type = get_class($e);
+        if (!in_array($type, array('CDbException','CException','PDOException','Error','TypeError','RuntimeException'), true)) $type = 'Exception';
+        $diagnostic = array('version'=>'GetProfile-SchemaAligned-20261023',
+            'reference'=>uniqid('profile-', false), 'stage'=>$stage, 'type'=>$type, 'sqlstate'=>$sqlstate);
+        // Never log/return exception messages, SQL, bound values or connection strings.
+        // Yii's independent database logging policy is outside this method's scope.
+        Yii::log('GetProfile failed: '.json_encode($diagnostic), CLogger::LEVEL_ERROR, 'api.logbook');
+        echo json_encode(array('success'=>false, 'message'=>'Gagal memuat profil', 'diagnostic'=>$diagnostic));
+    };
     try {
+        // Current actionLogin / actionEditProfile use db; do not switch aliases.
         $db = Yii::app()->db;
-
-        // Fetch user with current semester/stase from m_user
+        $stage = 'profile_query';
+        // Supplied m_user DDL has status/deleted_at, NOT is_active.
+        // Allowlist preserves overview plus requested legacy phone/address/gender/birth fields.
+        // The native/Web overview mappers still merge only their established overview keys.
         $sql = "
             SELECT
                 u.id,
                 u.display_name,
                 u.username,
                 u.code,
+                u.phone,
                 u.address,
                 u.gender,
                 u.date_of_birth,
@@ -273,39 +352,35 @@ public function actionGetProfile()
                 sem.name AS semester_name,
                 st.name AS stase_name
             FROM m_user u
-            LEFT JOIN m_role r ON r.id = u.id_role
+            INNER JOIN m_role r ON r.id = u.id_role AND r.id_client = u.id_client
             LEFT JOIN m_client c ON c.id = u.id_client
-            LEFT JOIN m_semester sem ON sem.id = u.id_semester
-            LEFT JOIN m_stase st ON st.id = u.id_stase
+            LEFT JOIN m_semester sem ON sem.id = u.id_semester AND sem.id_client = u.id_client
+            LEFT JOIN m_stase st ON st.id = u.id_stase AND st.id_client = u.id_client
             WHERE u.id = :id_user
               AND u.id_client = :id_client
-              AND u.is_active = true
+              AND u.status = 'Active'
+              AND u.deleted_at IS NULL
             LIMIT 1
         ";
-
         $user = $db->createCommand($sql)
-            ->bindValue(':id_user', $idUser)
-            ->bindValue(':id_client', $idClient)
+            ->bindValue(':id_user', $idUser, PDO::PARAM_INT)
+            ->bindValue(':id_client', $idClient, PDO::PARAM_INT)
             ->queryRow();
-
         if (!$user) {
-            echo json_encode(array('success' => false, 'message' => 'User tidak ditemukan atau tidak aktif'));
+            echo json_encode(array('success'=>false, 'message'=>'User tidak ditemukan atau tidak aktif'));
             Yii::app()->end();
+            return;
         }
-
-        // Never expose sensitive fields
-        unset($user['password'], $user['email'], $user['phone'], $user['token']);
-
-        echo json_encode(array(
-            'success' => true,
-            'data' => $user,
-        ));
+        // No SELECT *, role-ID fallback or credential fields.
+        echo json_encode(array('success'=>true, 'data'=>$user));
     } catch (Exception $e) {
-        Yii::log('GetProfile failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-        echo json_encode(array('success' => false, 'message' => 'Gagal memuat profil'));
+        $failure($e);
+    } catch (Throwable $e) {
+        $failure($e);
     }
     Yii::app()->end();
 }
+
 
 
 
@@ -1842,7 +1917,7 @@ public function actionGetTodo()
 
     
     
-        public function actionVerifyAllTodo()
+    public function actionVerifyAllTodo()
 {
     header('Content-Type: application/json; charset=utf-8');
     $post = json_decode(file_get_contents('php://input'), true);
@@ -1859,14 +1934,13 @@ public function actionGetTodo()
 
     if (array_key_exists('ppds_ids', $post)) {
         if (!is_array($post['ppds_ids'])) { http_response_code(422); echo json_encode(array('success'=>false, 'message'=>'ppds_ids harus berupa array ID PPDS')); Yii::app()->end(); }
-        $conditions = array();
-        foreach (array_values(array_unique($post['ppds_ids'])) as $index=>$id) {
+        $ids = array();
+        foreach ($post['ppds_ids'] as $id) {
             if (!is_scalar($id) || !preg_match('/^[1-9][0-9]*$/', (string)$id)) { http_response_code(422); echo json_encode(array('success'=>false, 'message'=>'ppds_ids harus berisi angka positif')); Yii::app()->end(); }
-            $key = ':ppds_' . $index;
-            $params[$key] = (string)$id;
-            $conditions[] = 'lb.id_user=' . $key;
+            $ids[] = (string)$id;
         }
-        $filters[] = $conditions ? '(' . implode(' OR ', $conditions) . ')' : '1=0';
+        $params[':ppds_ids_json'] = json_encode(array_values(array_unique($ids)));
+        $filters[] = 'lb.id_user IN (SELECT CAST(value AS bigint) FROM json_array_elements_text(CAST(:ppds_ids_json AS json)))';
     }
     foreach (array('id_action'=>'lb.id_action', 'id_hospital'=>'lb.id_hospital', 'id_stage'=>'ms.id_stage') as $field=>$column) {
         if (!array_key_exists($field, $post) || $post[$field] === null || $post[$field] === '') continue;
@@ -1888,12 +1962,26 @@ public function actionGetTodo()
     }
     $filterSql = $filters ? ' AND ' . implode(' AND ', $filters) : '';
 
-    $db = Yii::app()->db;
+
+    // Invalid notification ownership requires individual review, never inferred ownership.
+    $version = 'verifyall-valid-notification-owner-20261021-v1';
+    $correlation = str_replace('.', '', uniqid('va-', true));
+    $stage = 'connection';
     $transaction = null;
     try {
+        $db = Yii::app()->db;
+        $stage = 'transaction';
         $transaction = $db->beginTransaction();
-        // Preview is enforced read-only by PostgreSQL, not only by a PHP branch.
+        $db->createCommand('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')->execute();
         if ($preview) $db->createCommand('SET TRANSACTION READ ONLY')->execute();
+        // Legacy client IDs are not authentication. Retain assignment scope below;
+        // require active, nondeleted, tenant-owned authoritative verifier membership.
+        $stage = 'actor';
+        $actor = $db->createCommand("SELECT u.id FROM m_user u JOIN m_role r ON r.id=u.id_role
+            WHERE u.id=:id_user AND u.id_client=:id_client AND u.deleted_at IS NULL
+              AND u.status='Active' AND LOWER(TRIM(r.name)) IN ('staff','staff jejaring','institution','institution-admin')" . ($preview ? '' : ' FOR SHARE OF u, r'))
+            ->bindValues(array(':id_user'=>$params[':id_user'], ':id_client'=>$params[':id_client']))->queryRow();
+        if (!$actor) throw new CHttpException(403, 'Verify All actor denied');
         $joins = ' INNER JOIN t_logbook lb ON lb.id=tls.id_logbook
             LEFT JOIN m_action ma ON ma.id=lb.id_action AND ma.id_client=lb.id_client
             LEFT JOIN m_stase ms ON ms.id=lb.id_stase AND ms.id_client=lb.id_client ';
@@ -1911,7 +1999,16 @@ public function actionGetTodo()
         $roleRequired = 'EXISTS (SELECT 1 FROM m_action_another_role rolemap INNER JOIN m_another_role rolemaster ON rolemaster.id=rolemap.id_another_role
             WHERE '.$roleMatch.' AND rolemap.required_asm=true)';
         $bimbingan = "LOWER(COALESCE(ma.identifier,'') || ' ' || COALESCE(ma.name,'')) ~ 'bimbingan[-_[:space:]/]*operasi'";
-        $requiredScore = 'COALESCE((COALESCE(ma.is_exam,false)=false AND (('.$bimbingan.') OR
+        // These action families always need assessment in Detail, even when
+        // legacy metadata says no score, required_asm is absent, or ASM is saved.
+        // Match whole normalized keys, not broad seminar/thesis substrings.
+        // Legacy bare identifiers seminar/thesis require a canonical action name;
+        // an unrelated seminar or thesis activity must not inherit this policy.
+        $manualKeys = "('seminar-hasil','proposal-thesis','proposal-tesis','proposal-thesis-tesis','proposal-tesis-thesis','publikasi')";
+        $normalizedIdentifier = "TRIM(BOTH '-' FROM REGEXP_REPLACE(LOWER(COALESCE(ma.identifier,'')), '[-_[:space:]/]+', '-', 'g'))";
+        $normalizedName = "TRIM(BOTH '-' FROM REGEXP_REPLACE(LOWER(COALESCE(ma.name,'')), '[-_[:space:]/]+', '-', 'g'))";
+        $manualAssessment = '('.$normalizedIdentifier.' IN '.$manualKeys.' OR '.$normalizedName.' IN '.$manualKeys.')';
+        $requiredScore = 'COALESCE((COALESCE(ma.is_exam,false)=false AND (('.$manualAssessment.') OR ('.$bimbingan.') OR
             (ma.has_score=true AND ('.$categoryRequired.' OR '.$roleRequired.')))), false)';
         // Unknown/invalid relations are not evidence that assessment is optional.
         // Preserve legacy NULL capability flags when a valid selected relation
@@ -1933,80 +2030,144 @@ public function actionGetTodo()
         // Disjoint buckets: known special workflow, required ASM, then unresolved
         // metadata. Keep the existing response contract; unresolved metadata is
         // manual/special review, never falsely advertised as a scoring requirement.
-        $scoreWhere = $baseWhere.' AND NOT '.$special.' AND '.$requiredScore;
-        $specialWhere = $baseWhere.' AND ('.$special.' OR (NOT '.$requiredScore.' AND NOT '.$metadataValid.'))';
-        $eligibleWhere = $baseWhere.' AND NOT '.$special.' AND NOT '.$requiredScore.' AND '.$metadataValid;
+        // Historical inactive/hidden PPDS remain valid owners. No active/display policy here.
+        $ownerValid = '(lb.id_user IS NOT NULL AND lb.id_user > 0 AND EXISTS (
+            SELECT 1 FROM m_user owner JOIN m_role owner_role ON owner_role.id=owner.id_role
+            WHERE owner.id=lb.id_user AND owner.id_client=lb.id_client AND owner.deleted_at IS NULL
+              AND LOWER(TRIM(owner_role.name))=\'ppds\'))';
+        // Ownership takes manual precedence even when score/special metadata overlaps.
+        $scoreWhere = $baseWhere.' AND '.$ownerValid.' AND NOT '.$special.' AND '.$requiredScore;
+        $specialWhere = $baseWhere.' AND (NOT '.$ownerValid.' OR '.$special.' OR (NOT '.$requiredScore.' AND NOT '.$metadataValid.'))';
+        $eligibleWhere = $baseWhere.' AND '.$ownerValid.' AND NOT '.$special.' AND NOT '.$requiredScore.' AND '.$metadataValid;
+
+        $stage = 'counts';
         $skippedScore = (int)$db->createCommand('SELECT COUNT(*) FROM t_logbook_status tls '.$joins.' WHERE '.$scoreWhere)->bindValues($params)->queryScalar();
         $skippedSpecial = (int)$db->createCommand('SELECT COUNT(*) FROM t_logbook_status tls '.$joins.' WHERE '.$specialWhere)->bindValues($params)->queryScalar();
-        $candidateSql = "SELECT tls.id, tls.id_logbook, tls.notes, lb.id_user AS ppds_id,
+        // JSON ID chunks use one parameter each; no literal IDs or unbounded IN binds.
+        $idSet = '(SELECT CAST(value AS bigint) FROM json_array_elements_text(CAST(:bulk_ids AS json)))';
+        $stage = 'discover';
+        $parents = $db->createCommand('SELECT DISTINCT lb.id FROM t_logbook_status tls '.$joins.' WHERE '.$eligibleWhere.' ORDER BY lb.id')
+            ->bindValues($params)->queryAll();
+        $parentIds = array();
+        foreach ($parents as $row) $parentIds[] = (string)$row['id'];
+        $chunks = array_chunk($parentIds, 500);
+        if (!$preview) {
+            // All parent locks first, globally ascending; then sibling locks in
+            // (parent ID, status ID) order. No timestamp/Jejaring lock ordering.
+            $stage = 'parent_lock';
+            foreach ($chunks as $ids) {
+                $db->createCommand('SELECT id FROM t_logbook WHERE id_client=:client AND id IN '.$idSet.' ORDER BY id FOR UPDATE')
+                    ->bindValues(array(':client'=>$post['id_client'], ':bulk_ids'=>json_encode($ids)))->queryAll();
+            }
+            $stage = 'status_lock';
+            foreach ($chunks as $ids) {
+                $db->createCommand('SELECT id FROM t_logbook_status WHERE id_client=:client AND id_logbook IN '.$idSet.' AND deleted_at IS NULL ORDER BY id_logbook,id FOR UPDATE')
+                    ->bindValues(array(':client'=>$post['id_client'], ':bulk_ids'=>json_encode($ids)))->queryAll();
+            }
+        }
+        $stage = 'recheck';
+        $candidates = array();
+        $siblings = array();
+        foreach ($chunks as $ids) {
+            $readParams = $params;
+            $readParams[':bulk_ids'] = json_encode($ids);
+            $rows = $db->createCommand("SELECT tls.id, tls.id_logbook, tls.notes, lb.id_user AS ppds_id,
                 lb.date AS logbook_date, ma.id AS id_action, ma.name AS action_name, ma.multiple_verification,
                 (LOWER(COALESCE(ma.identifier,'') || ' ' || COALESCE(ma.name,'')) ~ 'proposal[-_[:space:]]*thesis|proposal[-_[:space:]]*tesis|seminar[-_[:space:]]*hasil') AS has_special_sequence
-            FROM t_logbook_status tls " . $joins . ' WHERE ' . $eligibleWhere . "
-            ORDER BY CASE WHEN POSITION('__staff_jejaring__' IN LOWER(COALESCE(tls.notes,''))) > 0 THEN 0 ELSE 1 END, tls.date_time ASC, tls.id ASC" . ($preview ? '' : ' FOR UPDATE OF tls, lb');
-        $candidates = $db->createCommand($candidateSql)->bindValues($params)->queryAll();
-
+                FROM t_logbook_status tls ".$joins.' WHERE '.$eligibleWhere.' AND lb.id IN '.$idSet.
+                " ORDER BY CASE WHEN POSITION('__staff_jejaring__' IN LOWER(COALESCE(tls.notes,''))) > 0 THEN 0 ELSE 1 END, tls.date_time ASC, tls.id ASC")
+                ->bindValues($readParams)->queryAll();
+            foreach ($rows as $row) $candidates[] = $row;
+            $rows = $db->createCommand('SELECT id,id_logbook,status,notes FROM t_logbook_status WHERE id_client=:client AND id_logbook IN '.$idSet.' AND deleted_at IS NULL')
+                ->bindValues(array(':client'=>$post['id_client'], ':bulk_ids'=>json_encode($ids)))->queryAll();
+            foreach ($rows as $row) $siblings[(string)$row['id_logbook']][] = $row;
+        }
         $verified = 0;
         $skippedSequential = 0;
-        $previewResolved = array();
-        foreach ($candidates as $candidate) {
-            if (!$candidate['has_special_sequence'] && stripos((string)$candidate['notes'], '__staff_jejaring__') === false) {
-                $blockingRows = $db->createCommand(
-                    "SELECT sibling.id FROM t_logbook_status sibling
-                     WHERE sibling.id_logbook=:id_logbook AND sibling.id_client=:id_client
-                       AND sibling.deleted_at IS NULL AND POSITION('__staff_jejaring__' IN LOWER(COALESCE(sibling.notes,''))) > 0
-                       AND LOWER(COALESCE(sibling.status,'pending')) <> 'verified'"
-                )->bindValues(array(':id_logbook'=>(string)$candidate['id_logbook'], ':id_client'=>(string)$post['id_client']))->queryAll();
-                $blocked = 0;
-                foreach ($blockingRows as $blockingRow) {
-                    if (!$preview || !isset($previewResolved[(string)$blockingRow['id']])) $blocked++;
+        $resolved = array();
+        $planned = array(array(), array());
+        $details = array();
+        // Process Jejaring BEFORE ordinary slots, independent of lock acquisition.
+        foreach (array(true, false) as $jejaringPass) foreach ($candidates as $candidate) {
+            $isJejaring = stripos((string)$candidate['notes'], '__staff_jejaring__') !== false;
+            if ($isJejaring !== $jejaringPass) continue;
+            if (!$candidate['has_special_sequence'] && !$isJejaring) {
+                $blocked = false;
+                foreach (isset($siblings[(string)$candidate['id_logbook']]) ? $siblings[(string)$candidate['id_logbook']] : array() as $sibling) {
+                    if (stripos((string)$sibling['notes'], '__staff_jejaring__') !== false
+                        && strtolower($sibling['status'] === null ? 'pending' : (string)$sibling['status']) !== 'verified'
+                        && !isset($resolved[(string)$sibling['id']])) { $blocked = true; break; }
                 }
-                if ($blocked > 0) { $skippedSequential++; continue; }
+                if ($blocked) { $skippedSequential++; continue; }
             }
-            if ($preview) { $verified++; $previewResolved[(string)$candidate['id']] = true; continue; }
-
-            // Recheck the SAME scoped predicate at the write, after locks:
-            // a parent resolved while SELECT waited must not approve stale rows.
-            $writeParams = $params;
-            $writeParams[':candidate_id'] = (string)$candidate['id'];
-            $changed = $db->createCommand(
-                "UPDATE t_logbook_status SET status='verified' WHERE id=:candidate_id AND id IN (
-                    SELECT tls.id FROM t_logbook_status tls ".$joins.' WHERE '.$eligibleWhere.')'
-            )->execute($writeParams);
-            if ($changed !== 1) continue;
-            $verified++;
-            $remaining = (int)$db->createCommand(
-                "SELECT COUNT(*) FROM t_logbook_status sibling
-                 WHERE sibling.id_logbook=:id_logbook AND sibling.id_client=:id_client
-                   AND sibling.deleted_at IS NULL AND LOWER(COALESCE(sibling.status,'pending')) <> 'verified'"
-            )->bindValues(array(':id_logbook'=>(string)$candidate['id_logbook'], ':id_client'=>(string)$post['id_client']))->queryScalar();
-            $parentVerified = $remaining === 0;
-            if ($parentVerified) {
-                $parentChanged = $db->createCommand(
-                    "UPDATE t_logbook SET verified=true, verified_status='verified'
-                     WHERE id=:id AND id_client=:id_client AND verified=false AND deleted_at IS NULL"
-                )->execute(array(':id'=>(string)$candidate['id_logbook'], ':id_client'=>(string)$post['id_client']));
-                if ($parentChanged === 1 && method_exists($this, 'logbookStatusNotifyPpds')) {
-                    try {
-                        $this->logbookStatusNotifyPpds($db, array('id'=>$candidate['id_logbook'], 'id_action'=>$candidate['id_action'], 'ppds_id'=>$candidate['ppds_id'], 'logbook_date'=>$candidate['logbook_date'], 'action_name'=>$candidate['action_name']), $post, 'verified');
-                    } catch (Throwable $notificationError) {
-                        Yii::log('VerifyAllTodo notification failed: '.$notificationError->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-                        throw $notificationError;
-                    }
+            $resolved[(string)$candidate['id']] = true;
+            $planned[$isJejaring ? 0 : 1][] = (string)$candidate['id'];
+            $details[(string)$candidate['id_logbook']] = $candidate;
+            if ($preview) $verified++;
+        }
+        if (!$preview) {
+            $stage = 'status_update';
+            $touched = array();
+            // Re-evaluate metadata, assignment, parent and sequence in every write
+            // statement after lock waits; a stale candidate can only be excluded.
+            $sequence = "(POSITION('__staff_jejaring__' IN LOWER(COALESCE(tls.notes,''))) > 0
+                OR (LOWER(COALESCE(ma.identifier,'') || ' ' || COALESCE(ma.name,'')) ~ 'proposal[-_[:space:]]*thesis|proposal[-_[:space:]]*tesis|seminar[-_[:space:]]*hasil')
+                OR NOT EXISTS (SELECT 1 FROM t_logbook_status predecessor
+                    WHERE predecessor.id_logbook=lb.id AND predecessor.id_client=lb.id_client AND predecessor.deleted_at IS NULL
+                      AND POSITION('__staff_jejaring__' IN LOWER(COALESCE(predecessor.notes,''))) > 0
+                      AND LOWER(COALESCE(predecessor.status,'pending')) <> 'verified'))";
+            foreach ($planned as $pass) foreach (array_chunk($pass, 500) as $ids) {
+                $writeParams = $params;
+                $writeParams[':bulk_ids'] = json_encode($ids);
+                $changed = $db->createCommand("UPDATE t_logbook_status target SET status='verified' WHERE target.id IN (
+                    SELECT tls.id FROM t_logbook_status tls ".$joins.' WHERE '.$eligibleWhere.' AND tls.id IN '.$idSet.' AND '.$sequence.
+                    ') RETURNING target.id,target.id_logbook')->bindValues($writeParams)->queryAll();
+                $verified += count($changed);
+                foreach ($changed as $row) $touched[(string)$row['id_logbook']] = true;
+            }
+            $stage = 'parent_update';
+            $completed = array();
+            foreach (array_chunk(array_keys($touched), 500) as $ids) {
+                $rows = $db->createCommand("UPDATE t_logbook lb SET verified=true,verified_status='verified'
+                    WHERE lb.id_client=:client AND lb.id IN ".$idSet." AND lb.verified=false AND lb.deleted_at IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM t_logbook_status sibling WHERE sibling.id_logbook=lb.id
+                        AND sibling.id_client=lb.id_client AND sibling.deleted_at IS NULL
+                        AND LOWER(COALESCE(sibling.status,'pending')) <> 'verified') RETURNING lb.id")
+                    ->bindValues(array(':client'=>$post['id_client'], ':bulk_ids'=>json_encode($ids)))->queryAll();
+                foreach ($rows as $row) $completed[] = (string)$row['id'];
+            }
+            // Preserve notification payload, FK, WIB and atomic failure semantics.
+            // The helper also rejects invalid ownership before its integer lookup.
+            $stage = 'notification';
+            foreach ($completed as $id) {
+                $candidate = $details[$id];
+                if (method_exists($this, 'logbookStatusNotifyPpds')) {
+                    $this->logbookStatusNotifyPpds($db, array('id'=>$candidate['id_logbook'], 'id_action'=>$candidate['id_action'], 'ppds_id'=>$candidate['ppds_id'], 'logbook_date'=>$candidate['logbook_date'], 'action_name'=>$candidate['action_name']), $post, 'verified');
                 }
             }
         }
+        $stage = 'commit';
         $transaction->commit();
         echo json_encode(array('success'=>true, 'message'=>$preview ? 'Preview Verify All' : 'Verify All selesai', 'verified'=>$verified, 'skipped_score'=>$skippedScore, 'skipped_special'=>$skippedSpecial, 'skipped_sequential'=>$skippedSequential));
-    } catch (CHttpException $e) {
-        if ($transaction !== null && $transaction->active) $transaction->rollback();
-        echo json_encode(array('success'=>false, 'message'=>$e->getMessage()));
     } catch (Throwable $e) {
-        if ($transaction !== null && $transaction->active) $transaction->rollback();
-        Yii::log('VerifyAllTodo failed: '.$e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-        echo json_encode(array('success'=>false, 'message'=>'Gagal menjalankan Verify All'));
+        $rollbackFailed = false;
+        try { if ($transaction !== null && $transaction->active) $transaction->rollback(); }
+        catch (Throwable $rollbackError) { $rollbackFailed = true; }
+        $sqlstate = null;
+        // PDO/CDbException expose errorInfo; never parse/log raw exception text.
+        for ($error = $e, $depth = 0; $error !== null && $depth < 8; $error = $error->getPrevious(), $depth++) {
+            $info = isset($error->errorInfo) && is_array($error->errorInfo) ? $error->errorInfo : array();
+            $code = isset($info[0]) ? (string)$info[0] : (string)$error->getCode();
+            if (preg_match('/^[0-9A-Z]{5}$/D', $code)) { $sqlstate = $code; break; }
+        }
+        $diagnostic = array('version'=>$version, 'correlation_id'=>$correlation, 'stage'=>$stage, 'sqlstate'=>$sqlstate);
+        Yii::log(json_encode(array_merge(array('event'=>'VerifyAllTodo failed', 'rollback_failed'=>$rollbackFailed), $diagnostic)), CLogger::LEVEL_ERROR, 'api.logbook');
+        echo json_encode(array('success'=>false, 'message'=>'Gagal menjalankan Verify All', 'diagnostic'=>$diagnostic));
     }
     Yii::app()->end();
 }
+
+
 
     
     
@@ -3018,32 +3179,30 @@ public function actionGetListExplorePpds()
             ->bindValue(':id_client', $idClient)
             ->queryAll();
 
-        // === HITUNG POIN MORBIDITAS AKTIF ===
-        $morbiditasPoints = 0;
-
-        // Cari sesi aktif (ended_at IS NULL)
-        $activeSession = Yii::app()->db->createCommand(
-            'SELECT id FROM t_morbiditas_points_history
-             WHERE id_user=:user AND id_client=:client AND ended_at IS NULL
-             ORDER BY id DESC LIMIT 1'
-        )->bindValues([':user'=>$idUser, ':client'=>$idClient])->queryRow();
-
-        if ($activeSession) {
-            // Hitung poin dari Morbiditas yang terikat ke sesi aktif
-            $bound = Yii::app()->db->createCommand(
-                "SELECT COALESCE(SUM(category.points), 0)::int AS total
-                 FROM t_logbook lb
-                 INNER JOIN m_action action ON action.id=lb.id_action AND action.id_client=lb.id_client
-                 INNER JOIN m_action_category category ON category.id=lb.id_category
-                 WHERE lb.id_morbiditas_period=:session_id
-                   AND lb.deleted_at IS NULL AND category.points IS NOT NULL
-                   AND (lb.verified IS TRUE OR LOWER(COALESCE(lb.verified_status, ''))='verified')
-                   AND (LOWER(COALESCE(action.identifier, ''))='morbiditas'
-                        OR LOWER(COALESCE(action.name, ''))='morbiditas' OR action.id=39)"
-            )->bindValue(':session_id', (int)$activeSession['id'])->queryRow();
-
-            $morbiditasPoints = (int)($bound['total'] ?? 0);
+        // Read-only: use the same active-session calculation as dashboard/Undo.
+        // Keep this endpoint's existing data connection and selected PPDS identity.
+        $db = Yii::app()->db;
+        foreach (array('calculateMorbiditasSessionPoints',
+            'calculateMorbiditasSessionPointsFallback', 'morbiditasSemesterUndoBoundPoints') as $helper) {
+            if (!method_exists($this, $helper)) {
+                throw new RuntimeException('Helper poin Morbiditas belum tersedia: ' . $helper);
+            }
         }
+        $pointsUser = $db->createCommand('SELECT id_semester FROM m_user
+            WHERE id=:user AND id_client=:client AND deleted_at IS NULL')
+            ->bindValues(array(':user'=>$idUser, ':client'=>$idClient))->queryRow();
+        if (!$pointsUser) {
+            throw new RuntimeException('User tidak ditemukan');
+        }
+        $idSemester = (int)$pointsUser['id_semester'];
+        $activeSession = $db->createCommand('SELECT started_at FROM t_morbiditas_points_history
+            WHERE id_user=:user AND id_client=:client AND id_semester=:semester
+              AND ended_at IS NULL ORDER BY id DESC LIMIT 1')
+            ->bindValues(array(':user'=>$idUser, ':client'=>$idClient, ':semester'=>$idSemester))->queryRow();
+        $morbiditasPoints = (int)$this->calculateMorbiditasSessionPoints(
+            $db, $idUser, $idClient, $idSemester,
+            $activeSession ? $activeSession['started_at'] : '1970-01-01 00:00:00+00'
+        );
 
         $user['morbiditas_points'] = $morbiditasPoints;
 
@@ -3061,6 +3220,7 @@ public function actionGetListExplorePpds()
 
     Yii::app()->end();
 }
+
 
     
         public function actionGetLogbookIdCustomer() {
@@ -4043,7 +4203,20 @@ public function actionUndoMilestoneMorbiditasSemester()
 /* Replace the existing actionCreateLogbook() method with this entire method. */
 public function actionCreateLogbook()
 {
+    // Direct browser JSON POST must pass preflight before payload parsing.
+    // This branch must never acquire a DB connection or start a transaction.
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, Accept');
+    header('Access-Control-Max-Age: 600');
     header('Content-Type: application/json; charset=utf-8');
+
+    if (isset($_SERVER['REQUEST_METHOD']) && strtoupper($_SERVER['REQUEST_METHOD']) === 'OPTIONS') {
+        http_response_code(204);
+        Yii::app()->end();
+        return;
+    }
+
     $payload = json_decode(file_get_contents('php://input'), true);
     if (!is_array($payload)) return $this->createLogbookJson(false, 'Payload JSON tidak valid.', 400);
     if (!$this->createLogbookPositiveId(isset($payload['created_by']) ? $payload['created_by'] : null)
@@ -4128,6 +4301,7 @@ public function actionCreateLogbook()
         return $this->createLogbookJson(false, 'Create logbook error: '.$e->getMessage(), 500);
     }
 }
+
 
 
 
@@ -6063,44 +6237,71 @@ private function updateLogbookEmrNullableInteger($value, $field)
     {
         header('Content-Type: application/json; charset=utf-8');
 
+        /* Self-contained endpoint: the supplied controller does not define the
+         * former validation/schema/response helpers. Keep this replacement atomic. */
+        $isPositiveNumericId = function ($value) {
+            return is_scalar($value) && preg_match('/^[1-9][0-9]*$/D', (string)$value);
+        };
+        $json = function ($success, $message, $data = null) {
+            $response = array('success'=>$success, 'message'=>$message);
+            if ($data !== null) $response['data'] = $data;
+            echo json_encode($response, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+            return null;
+        };
+        $columns = function ($db, $table) {
+            $schema = $db->getSchema()->getTable($table);
+            if ($schema === null) throw new RuntimeException('Required logbook table is unavailable');
+            return array_fill_keys(array_keys($schema->columns), true);
+        };
+        $textColumn = function ($db, $column) {
+            $schema = $db->getSchema()->getTable('t_logbook_status');
+            if ($schema === null || !isset($schema->columns[$column])) return false;
+            return preg_match('/^(?:text|character varying|character|varchar|char|citext)(?:\(|$)/i', $schema->columns[$column]->dbType) === 1;
+        };
+
+
         $post = json_decode(file_get_contents('php://input'), true);
         if (!is_array($post)) {
-            return $this->logbookStatusJson(false, 'Payload JSON tidak valid');
+            return $json(false, 'Payload JSON tidak valid');
         }
 
         foreach (array('id_logbook', 'id_user', 'id_action_role', 'id_client') as $field) {
-            if (!isset($post[$field]) || !$this->logbookStatusIsPositiveNumericId($post[$field])) {
-                return $this->logbookStatusJson(false, $field . ' wajib berupa angka positif');
+            if (!isset($post[$field]) || !$isPositiveNumericId($post[$field])) {
+                return $json(false, $field . ' wajib berupa angka positif');
             }
         }
 
         $status = isset($post['status']) && is_string($post['status']) ? strtolower(trim($post['status'])) : null;
         if (!in_array($status, array('verified', 'rejected', 'revised'), true)) {
-            return $this->logbookStatusJson(false, 'Status tidak valid. Pilih: verified, rejected, revised');
+            return $json(false, 'Status tidak valid. Pilih: verified, rejected, revised');
         }
 
         foreach (array('verify_notes', 'reject_notes', 'notes') as $field) {
             if (isset($post[$field]) && !is_scalar($post[$field])) {
-                return $this->logbookStatusJson(false, $field . ' harus berupa teks');
+                return $json(false, $field . ' harus berupa teks');
             }
         }
 
         // Reject is note-only: category and ASM drafts never participate.
         if ($status === 'rejected' && (!isset($post['reject_notes']) || trim((string)$post['reject_notes']) === '')) {
-            return $this->logbookStatusJson(false, 'Catatan penolakan wajib diisi');
+            return $json(false, 'Catatan penolakan wajib diisi');
         }
-        $db = Yii::app()->db;
         $transaction = null;
+        $stage = 'connection';
         try {
+            $db = Yii::app()->db;
+            $stage = 'schema';
             /* Introspection is optional so older deployments without the dedicated note columns still work. */
-            $statusColumns = $this->logbookStatusColumns($db, 't_logbook_status');
-            $logbookColumns = $this->logbookStatusColumns($db, 't_logbook');
+            $statusColumns = $columns($db, 't_logbook_status');
+            $logbookColumns = $columns($db, 't_logbook');
             // `notes` is part of the established status-table protocol; only
             // the newer dedicated note columns are optional.
             $statusColumns['notes'] = true;
+            $stage = 'transaction';
             $transaction = $db->beginTransaction();
+            $stage = 'verification';
             // Legacy login-ID protocol: validate membership; this is not sender authentication.
-            $userColumns = $this->logbookStatusColumns($db, 'm_user');
+            $userColumns = $columns($db, 'm_user');
             $actorWhere = 'u.id=:id_user AND u.id_client=:id_client';
             if (isset($userColumns['deleted_at'])) $actorWhere .= ' AND u.deleted_at IS NULL';
             if (isset($userColumns['status'])) $actorWhere .= " AND LOWER(COALESCE(u.status, ''))='active'";
@@ -6345,7 +6546,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
              * cannot satisfy this gate using a category from another activity. */
             if ($status === 'verified' && $isMorbiditasReporterOrAssessor) {
                 $categoryId = array_key_exists('id_category', $post) ? $post['id_category'] : $parent['id_category'];
-                if (!$this->logbookStatusIsPositiveNumericId($categoryId)) {
+                if (!$isPositiveNumericId($categoryId)) {
                     throw new RuntimeException('Kategori Morbiditas wajib dipilih sebelum verifikasi');
                 }
                 $category = $db->createCommand(
@@ -6369,7 +6570,9 @@ private function updateLogbookEmrNullableInteger($value, $field)
                 }
             }
             if ($status === 'verified') {
+                $stage = 'scores';
                 $this->logbookStatusReplaceScores($db, $post, $parent);
+                $stage = 'verification';
             }
 
             $assignments = array('status = :status');
@@ -6396,7 +6599,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
                 if ($rejectNote !== '') {
                     /* On this deployed schema reject_notes is SMALLINT, not a text note.
                      * Store the human rejection reason only in a text-compatible column. */
-                    if ($this->logbookStatusTextColumn($db, 'notes')) {
+                    if ($textColumn($db, 'notes')) {
                         /* `notes` is also the Staff Jejaring slot key. Retain
                          * its marker together with the readable reject reason so
                          * a later PPDS Edit updates this row rather than inserting
@@ -6406,7 +6609,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
                         $params[':notes'] = $isJejaringTarget
                             ? '__staff_jejaring__' . "\n" . $rejectNote
                             : $rejectNote;
-                    } elseif ($this->logbookStatusTextColumn($db, 'reject_notes')) {
+                    } elseif ($textColumn($db, 'reject_notes')) {
                         $assignments[] = 'reject_notes = :reject_notes';
                         $params[':reject_notes'] = $rejectNote;
                     } else {
@@ -6465,7 +6668,9 @@ private function updateLogbookEmrNullableInteger($value, $field)
             ));
 
             if ($statusChanged && in_array($status, array('verified', 'rejected', 'revised'), true)) {
+                $stage = 'notification';
                 $this->logbookStatusNotifyPpds($db, $parent, $post, $status);
+                $stage = 'verification';
             }
 
             $returnColumns = array('id', 'id_user', 'id_action_role', 'status');
@@ -6479,7 +6684,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
             )->bindValues($allParams)->queryAll();
 
             $transaction->commit();
-            return $this->logbookStatusJson(true, 'Status logbook berhasil diupdate', array(
+            return $json(true, 'Status logbook berhasil diupdate', array(
                 'parent' => array(
                     'id' => $parent['id'],
                     'verified' => $parentVerified,
@@ -6488,16 +6693,23 @@ private function updateLogbookEmrNullableInteger($value, $field)
                 't_logbook_status' => $returnedStatuses,
             ));
         } catch (Throwable $e) {
-            if ($transaction !== null && $transaction->active) {
-                $transaction->rollback();
+            $rollbackFailed = false;
+            try {
+                if ($transaction !== null && $transaction->active) $transaction->rollback();
+            } catch (Throwable $rollbackError) { $rollbackFailed = true; }
+            $sqlstate = null;
+            for ($cause=$e, $depth=0; $cause !== null && $depth<8; $cause=$cause->getPrevious(), $depth++) {
+                $info = isset($cause->errorInfo) && is_array($cause->errorInfo) ? $cause->errorInfo : array();
+                $code = isset($info[0]) ? (string)$info[0] : (string)$cause->getCode();
+                if (preg_match('/^[0-9A-Z]{5}$/D', $code)) { $sqlstate=$code; break; }
             }
-            Yii::log('Update logbook status failed: ' . $e->getMessage(), CLogger::LEVEL_ERROR, 'api.logbook');
-            /* TEMPORARY diagnostic for the development mobile endpoint.
-             * Remove `detail` once the current live error has been fixed. */
-            return $this->logbookStatusJson(false, 'Gagal memperbarui status logbook', array(
-                'detail' => $e->getMessage(),
-                'error_type' => get_class($e),
-            ));
+            $diagnostic = array('version'=>'individual-selfcontained-20261022-v1', 'stage'=>$stage,
+                'error_type'=>get_class($e), 'sqlstate'=>$sqlstate);
+            try {
+                Yii::log(json_encode(array_merge(array('event'=>'UpdateLogbookStatus failed',
+                    'rollback_failed'=>$rollbackFailed), $diagnostic)), CLogger::LEVEL_ERROR, 'api.logbook');
+            } catch (Throwable $loggingError) { }
+            return $json(false, 'Gagal memperbarui status logbook', array('diagnostic'=>$diagnostic));
         }
     }
 
@@ -6615,11 +6827,22 @@ private function updateLogbookEmrNullableInteger($value, $field)
 
     private function logbookStatusNotifyPpds($db, $parent, $post, $status)
 {
-    $ppds = $db->createCommand('SELECT id, id_role FROM m_user WHERE id=:id AND id_client=:client')
+    $notificationStage = 'owner_validation';
+    try {
+    // Validate before string binding: NULL must never become an empty integer token.
+    if (!isset($parent['ppds_id']) || !is_scalar($parent['ppds_id'])
+        || !preg_match('/^[1-9][0-9]*$/D', (string)$parent['ppds_id'])) {
+        throw new RuntimeException('Notification owner is invalid; individual ownership review required');
+    }
+    $notificationStage = 'ppds_lookup';
+    $ppds = $db->createCommand("SELECT u.id, u.id_role FROM m_user u JOIN m_role r ON r.id=u.id_role
+        WHERE u.id=:id AND u.id_client=:client AND u.deleted_at IS NULL AND LOWER(TRIM(r.name))='ppds'")
         ->bindValues(array(':id'=>(string)$parent['ppds_id'], ':client'=>(string)$post['id_client']))->queryRow();
+    if (!$ppds) throw new RuntimeException('Notification owner is unavailable; individual ownership review required');
+    $notificationStage = 'actor_lookup';
     $actor = $db->createCommand('SELECT display_name FROM m_user WHERE id=:id AND id_client=:client')
         ->bindValues(array(':id'=>(string)$post['id_user'], ':client'=>(string)$post['id_client']))->queryRow();
-    if (!$ppds) return;
+    // A missing owner has already thrown above; never silently commit without notification.
     $actorName = trim((string)(isset($actor['display_name']) ? $actor['display_name'] : 'Staff'));
     $labels = array('verified'=>'telah diverifikasi', 'rejected'=>'ditolak', 'revised'=>'dibatalkan verifikasinya');
 
@@ -6655,55 +6878,37 @@ private function updateLogbookEmrNullableInteger($value, $field)
     };
     $displayDate = $formatActivityDateWib(isset($parent['logbook_date']) ? $parent['logbook_date'] : null);
     $message = 'Data ' . $parent['action_name'] . ' ' . $displayDate . ' ' . $labels[$status] . ' oleh ' . $actorName;
+    // Keep SQL FALSE: Yii insert() uses PDO execute(array), where PHP false becomes ''.
+    $notificationStage = 'insert';
     $db->createCommand()->insert('t_notif', array(
         'message'=>$message, 'date'=>new CDbExpression('CURRENT_TIMESTAMP'), 'type'=>$status,
         'id_user'=>(int)$ppds['id'], 'id_role'=>$ppds['id_role'], 'read'=>new CDbExpression('FALSE'),
         'id_client'=>(int)$post['id_client'], 'id_logbook'=>(int)$parent['id'],
         'url'=>'/ppds/action/' . $parent['id_action'] . '/' . $parent['id'],
     ));
+    } catch (Throwable $error) {
+        $sqlstate = null;
+        for ($cause = $error, $depth = 0; $cause !== null && $depth < 8; $cause = $cause->getPrevious(), $depth++) {
+            $info = isset($cause->errorInfo) && is_array($cause->errorInfo) ? $cause->errorInfo : array();
+            $code = isset($info[0]) ? (string)$info[0] : (string)$cause->getCode();
+            if (preg_match('/^[0-9A-Z]{5}$/D', $code)) { $sqlstate = $code; break; }
+        }
+        // No SQL, exception text, bindings, identifiers or clinical payloads.
+        // A logging failure must not replace the original database exception.
+        try {
+            Yii::log(json_encode(array(
+                'event'=>'LogbookStatusNotifyPpds failed',
+                'version'=>'notification-valid-owner-20261021-v1',
+                'stage'=>$notificationStage,
+                'sqlstate'=>$sqlstate,
+            )), CLogger::LEVEL_ERROR, 'api.logbook');
+        } catch (Throwable $loggingError) {
+        }
+        // The caller must still roll back status, parent AND notification writes.
+        throw $error;
+    }
 }
 
-
-    private function logbookStatusTextColumn($db, $columnName)
-    {
-        $schema = $db->schema->getTable('t_logbook_status');
-        if (!$schema || !isset($schema->columns[$columnName])) return false;
-        $type = strtolower((string)$schema->columns[$columnName]->type);
-        return in_array($type, array('string', 'text'), true);
-    }
-
-    private function logbookStatusIsPositiveNumericId($value)
-    {
-        return is_scalar($value) && preg_match('/^[1-9][0-9]*$/', (string) $value) === 1;
-    }
-
-    private function logbookStatusColumns($db, $table)
-    {
-        try {
-            $rows = $db->createCommand(
-                'SELECT column_name FROM information_schema.columns '
-                . 'WHERE table_name = :table_name AND table_schema = ANY(current_schemas(false))'
-            )->bindValue(':table_name', $table)->queryAll();
-            $columns = array();
-            foreach ($rows as $row) {
-                $columns[$row['column_name']] = true;
-            }
-            return $columns;
-        } catch (Throwable $e) {
-            Yii::log('Cannot inspect columns for ' . $table . ': ' . $e->getMessage(), CLogger::LEVEL_WARNING, 'api.logbook');
-            return array();
-        }
-    }
-
-    private function logbookStatusJson($success, $message, $data = null)
-    {
-        $response = array('success' => $success, 'message' => $message);
-        if ($data !== null) {
-            $response['data'] = $data;
-        }
-        echo json_encode($response);
-        Yii::app()->end();
-    }
 
 
     
@@ -6792,7 +6997,19 @@ private function ensureMorbiditasPointsSession($db, $idUser, $idClient, $idSemes
     
   public function actionGetLogbookFormMetadata()
 {
+    // Direct browser JSON requests preflight with an empty OPTIONS body.
+    // Keep CORS on validation/error responses as well as successful metadata.
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, Accept');
+    header('Access-Control-Max-Age: 600');
     header('Content-Type: application/json');
+
+    if (isset($_SERVER['REQUEST_METHOD']) && strtoupper($_SERVER['REQUEST_METHOD']) === 'OPTIONS') {
+        http_response_code(204);
+        Yii::app()->end();
+        return;
+    }
 
     $post = json_decode(file_get_contents('php://input'), true);
     if (!is_array($post)) {
@@ -7022,6 +7239,7 @@ private function ensureMorbiditasPointsSession($db, $idUser, $idClient, $idSemes
         $this->logbookMetadataResponse(false, $message, null, 500);
     }
 }
+
 
 private function logbookMetadataResponse($success, $message, $data = null, $statusCode = 200)
 {

@@ -3725,6 +3725,17 @@ public function actionUndoMorbiditasStase()
                     AND ma.has_score = :has_score
                     AND ma.has_score_option = :has_score_option
                     AND COALESCE(mac.required_asm, TRUE) = :required_asm
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM m_action_another_role maar
+                        INNER JOIN m_another_role eligible_role
+                            ON eligible_role.id = maar.id_another_role
+                        WHERE eligible_role.id = tl.id_another_role
+                            AND eligible_role.id_client = tl.id_client
+                            AND maar.id_action = tl.id_action
+                            AND maar.id_client = tl.id_client
+                            AND maar.required_asm = FALSE
+                    )
                 GROUP BY
                     ma.id,
                     ma.name
@@ -3743,6 +3754,7 @@ public function actionUndoMorbiditasStase()
             'data'    => $res
         ]);
     }
+
 
     public function actionGetDetailPenilaianLogbook() {
         $rest_json = file_get_contents("php://input");
@@ -3777,6 +3789,17 @@ public function actionUndoMorbiditasStase()
                     AND ma.has_score = :has_score
                     AND ma.has_score_option = :has_score_option
                     AND COALESCE(mac.required_asm, TRUE) = :required_asm
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM m_action_another_role maar
+                        INNER JOIN m_another_role eligible_role
+                            ON eligible_role.id = maar.id_another_role
+                        WHERE eligible_role.id = tl.id_another_role
+                            AND eligible_role.id_client = tl.id_client
+                            AND maar.id_action = tl.id_action
+                            AND maar.id_client = tl.id_client
+                            AND maar.required_asm = FALSE
+                    )
                 GROUP BY
                     ma.id,
                     ma.name
@@ -3795,6 +3818,7 @@ public function actionUndoMorbiditasStase()
             'data'    => $res
         ]);
     }
+
 
     public function actionGetListByStatusPenilaianLogbook()
     {
@@ -3880,6 +3904,17 @@ public function actionUndoMorbiditasStase()
                 tl.deleted_at IS NULL
                 AND tl.id_action = :id_action
                 AND COALESCE(mac.required_asm, TRUE) = TRUE
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM m_action_another_role maar
+                        INNER JOIN m_another_role eligible_role
+                            ON eligible_role.id = maar.id_another_role
+                        WHERE eligible_role.id = tl.id_another_role
+                            AND eligible_role.id_client = tl.id_client
+                            AND maar.id_action = tl.id_action
+                            AND maar.id_client = tl.id_client
+                            AND maar.required_asm = FALSE
+                    )
                 AND (
                     (:type = 'scored' AND ts.id_logbook IS NOT NULL)
                     OR
@@ -4116,6 +4151,7 @@ public function actionUndoMorbiditasStase()
             ],
         ]);
     }
+
 
     public function actionGetDetailByStatusPenilaianLogbook()
     {
@@ -6159,7 +6195,7 @@ public function actionUndoMorbiditasStase()
         ]);
     }
 
-    public function actionGetListRekapLogbook()
+        public function actionGetListRekapLogbook()
     {
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
@@ -6197,7 +6233,8 @@ public function actionUndoMorbiditasStase()
                 vl.diagnosis,
                 vl.treatment,
                 vl.patient,
-                vl.title
+                vl.title,
+                tl.notes AS notes
             {$baseWhere}
         ";
 
@@ -6332,6 +6369,7 @@ public function actionUndoMorbiditasStase()
             ],
         ]);
     }
+
 
     public function actionGetDetailRekapLogbook()
     {
