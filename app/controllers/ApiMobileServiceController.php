@@ -1028,7 +1028,7 @@ public function actionGetLogbook()
     $db = Yii::app()->db;
 
     try {
-        $actionForList = $db->createCommand('SELECT is_exam, identifier, name FROM m_action WHERE id=:id AND id_client=:client')
+        $actionForList = $db->createCommand('SELECT is_exam, identifier, name, allow_other_categories FROM m_action WHERE id=:id AND id_client=:client')
             ->bindValues(array(':id'=>(int)$post['id_action'], ':client'=>(int)$post['id_client']))->queryRow();
         if (!$actionForList) throw new RuntimeException('action tidak ditemukan untuk client ini');
         $isExamAction = $this->createLogbookFlag($actionForList, 'is_exam');
@@ -1118,12 +1118,16 @@ public function actionGetLogbook()
             else throw new RuntimeException('presentasi tidak valid');
             $where[] = 't.is_presentation = CAST(:is_presentation AS boolean)'; $params[':is_presentation'] = $presentation;
         }
+        if (isset($post['category_group']) && $post['category_group'] !== '') {
+            if ($post['category_group'] !== 'other') throw new RuntimeException('category_group tidak valid');
+            $where[] = 'EXISTS(SELECT 1 FROM m_action_category oc WHERE oc.id=t.id_category AND oc.id_action=t.id_action AND oc.id_client=t.id_client AND oc.is_other IS TRUE)';
+        }
         $whereSql = implode(' AND ', $where);
         $categoryAggregates = array();
         if (!empty($post['category_aggregates'])) {
-            if (!preg_match('/bimbingan[-_\s]*operasi/i', $actionForList['identifier'].' '.$actionForList['name'])) throw new RuntimeException('Agregat hanya tersedia untuk Bimbingan Operasi');
+            if (!$this->createLogbookTruthy($actionForList['allow_other_categories']) && !preg_match('/bimbingan[-_\s]*operasi/i', $actionForList['identifier'].' '.$actionForList['name'])) throw new RuntimeException('Agregat kategori belum diaktifkan untuk kegiatan ini');
             // Exactly the same tenant, target and active filters as COUNT/page, without LIMIT/OFFSET.
-            $aggregateSql = "SELECT mac.id, mac.name AS label, COALESCE(a.count,0) AS count, "
+            $aggregateSql = "SELECT mac.id, mac.name AS label, mac.is_other, mac.required_asm, COALESCE(a.count,0) AS count, "
                 . "COALESCE(a.presentation_count,0) AS presentation_count, COALESCE(a.presented_count,0) AS presented_count "
                 . "FROM m_action_category mac LEFT JOIN (SELECT t.id_category, COUNT(*) AS count, "
                 . "COUNT(*) FILTER (WHERE t.is_presentation IS TRUE) AS presentation_count, "
@@ -1136,15 +1140,15 @@ public function actionGetLogbook()
             $aggregateRows = $db->createCommand($aggregateSql)->bindValues($aggregateParams)->queryAll();
             foreach ($aggregateRows as $category) {
                 $categoryAggregates[] = array('id'=>(int)$category['id'], 'label'=>$category['label'], 'count'=>(int)$category['count'],
-                    'presentationCount'=>(int)$category['presentation_count'], 'presentedCount'=>(int)$category['presented_count']);
+                    'is_other'=>$this->createLogbookTruthy($category['is_other']), 'required_asm'=>$this->createLogbookTruthy($category['required_asm']), 'presentationCount'=>(int)$category['presentation_count'], 'presentedCount'=>(int)$category['presented_count']);
             }
         }
         $total = (int)$db->createCommand('SELECT COUNT(*) FROM t_logbook t LEFT JOIN m_user mu ON mu.id=t.id_user AND mu.deleted_at IS NULL WHERE '.$whereSql)->bindValues($params)->queryScalar();
         $sql = 'SELECT t.*, mu.display_name AS _peserta_display_name, mh.id AS _hospital_id, mh.name AS _hospital_name, '
-            . 'mac.id AS _category_id, mac.name AS _category_name, ms.id AS _stase_id, ms.name AS _stase_name, '
+            . 'mac.id AS _category_id, mac.name AS _category_name, mac.is_other AS _category_is_other, mac.required_asm AS _category_required_asm, ms.id AS _stase_id, ms.name AS _stase_name, '
             . 'creator.display_name AS _created_by_name '
             . 'FROM t_logbook t LEFT JOIN m_user mu ON mu.id=t.id_user AND mu.deleted_at IS NULL '
-            . 'LEFT JOIN m_hospital mh ON mh.id=t.id_hospital LEFT JOIN m_action_category mac ON mac.id=t.id_category '
+            . 'LEFT JOIN m_hospital mh ON mh.id=t.id_hospital LEFT JOIN m_action_category mac ON mac.id=t.id_category AND mac.id_action=t.id_action AND mac.id_client=t.id_client '
             . 'LEFT JOIN m_stase ms ON ms.id=t.id_stase '
             . 'LEFT JOIN m_user creator ON creator.id=t.created_by '
             . 'WHERE '.$whereSql.' ORDER BY t.date DESC, t.created_date DESC LIMIT :limit OFFSET :offset';
@@ -1166,7 +1170,7 @@ public function actionGetLogbook()
             $logbook = array(); foreach ($row as $key=>$value) if (strpos($key, '_') !== 0) $logbook[$key]=$value;
             $logbook['m_user'] = array('id'=>$row['id_user'], 'display_name'=>$row['_peserta_display_name']);
             $logbook['m_hospital'] = $row['_hospital_id'] ? array('id'=>$row['_hospital_id'], 'name'=>$row['_hospital_name']) : null;
-            $logbook['m_action_category'] = $row['_category_id'] ? array('id'=>$row['_category_id'], 'name'=>$row['_category_name']) : null;
+            $logbook['m_action_category'] = $row['_category_id'] ? array('id'=>$row['_category_id'], 'name'=>$row['_category_name'], 'is_other'=>$this->createLogbookTruthy($row['_category_is_other']), 'required_asm'=>$this->createLogbookTruthy($row['_category_required_asm'])) : null;
             $logbook['m_stase'] = $row['_stase_id'] ? array('id'=>$row['_stase_id'], 'name'=>$row['_stase_name']) : null;
             $logbook['t_logbook_status'] = isset($statusByLogbook[$row['id']]) ? $statusByLogbook[$row['id']] : array();
             $logbook['t_logbook_asm'] = isset($asmByLogbook[$row['id']]) ? $asmByLogbook[$row['id']] : array();
@@ -1180,6 +1184,7 @@ public function actionGetLogbook()
     }
     Yii::app()->end();
 }
+
 
   
 
@@ -1671,7 +1676,7 @@ public function actionGetTodo()
 
     
     
-        public function actionGetLogbookById() {
+    public function actionGetLogbookById() {
         header('Content-Type: application/json');
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
@@ -1695,7 +1700,7 @@ public function actionGetTodo()
                     ma.id_type AS _ma_id_type,
                     ma.name AS _ma_name,
                     mat.name AS _mat_name,
-                    ma.has_notes, ma.has_attachment, ma.has_category,
+                    ma.allow_other_categories, ma.has_notes, ma.has_attachment, ma.has_category,
                     ma.is_milestone, ma.show_on_milestone, ma.multiple_verification,
                     ma.has_score, ma.has_presentation, ma.has_location,
                     ma.has_emr, ma.has_another_role, ma.has_title,
@@ -1705,7 +1710,7 @@ public function actionGetTodo()
                     ma.is_grouped_by_category, ma.has_operation_code, ma.is_exam,
                     mac.id AS _mac_id,
                     mac.name AS _mac_name,
-                    mac.points AS _mac_points,
+                    mac.points AS _mac_points, mac.is_other AS _mac_is_other, mac.required_asm AS _mac_required_asm,
                     mh.id AS _mh_id,
                     mh.name AS _mh_name
                 FROM t_logbook lb
@@ -1714,7 +1719,7 @@ public function actionGetTodo()
                 LEFT JOIN m_stage st ON s.id_stage = st.id
                 LEFT JOIN m_action ma ON lb.id_action = ma.id
                 LEFT JOIN m_action_type mat ON ma.id_type = mat.id
-                LEFT JOIN m_action_category mac ON lb.id_category = mac.id
+                LEFT JOIN m_action_category mac ON lb.id_category = mac.id AND mac.id_action=lb.id_action AND mac.id_client=lb.id_client
                 LEFT JOIN m_hospital mh ON lb.id_hospital = mh.id
                 WHERE lb.id = :id
             ";
@@ -1732,7 +1737,7 @@ public function actionGetTodo()
             $excludeKeys = [
                 '_u_id', '_u_display_name', '_u_username', '_s_name', '_st_label_color',
                 '_ma_id', '_ma_id_type', '_ma_name', '_ma_id_client', '_mac_id', '_mac_name', '_mac_points',
-                '_mh_id', '_mh_name', '_mat_name',
+                '_mh_id', '_mh_name', '_mat_name', '_mac_is_other', '_mac_required_asm', 'allow_other_categories',
                 'has_notes', 'has_attachment', 'has_category', 'is_milestone', 'show_on_milestone',
                 'multiple_verification', 'has_score', 'has_presentation', 'has_location',
                 'has_emr', 'has_another_role', 'has_title', 'has_status', 'show_on_menu',
@@ -1769,6 +1774,7 @@ public function actionGetTodo()
                 'has_notes'              => $row['has_notes'],
                 'has_attachment'         => $row['has_attachment'],
                 'has_category'           => $row['has_category'],
+                'allow_other_categories' => $this->createLogbookTruthy($row['allow_other_categories']),
                 'is_milestone'           => $row['is_milestone'],
                 'show_on_milestone'      => $row['show_on_milestone'],
                 'multiple_verification'  => $row['multiple_verification'],
@@ -1851,6 +1857,8 @@ public function actionGetTodo()
             $data['m_action_category'] = $row['_mac_id'] ? [
                 'id'   => $row['_mac_id'],
                 'name' => $row['_mac_name'],
+                'is_other' => $this->createLogbookTruthy($row['_mac_is_other']),
+                'required_asm' => $this->createLogbookTruthy($row['_mac_required_asm']),
                 'points' => $row['_mac_points'] === null ? null : (int) $row['_mac_points'],
             ] : null;
     
@@ -1913,6 +1921,7 @@ public function actionGetTodo()
     
         Yii::app()->end();
     }
+
 
 
     
@@ -2008,7 +2017,8 @@ public function actionGetTodo()
         $normalizedIdentifier = "TRIM(BOTH '-' FROM REGEXP_REPLACE(LOWER(COALESCE(ma.identifier,'')), '[-_[:space:]/]+', '-', 'g'))";
         $normalizedName = "TRIM(BOTH '-' FROM REGEXP_REPLACE(LOWER(COALESCE(ma.name,'')), '[-_[:space:]/]+', '-', 'g'))";
         $manualAssessment = '('.$normalizedIdentifier.' IN '.$manualKeys.' OR '.$normalizedName.' IN '.$manualKeys.')';
-        $requiredScore = 'COALESCE((COALESCE(ma.is_exam,false)=false AND (('.$manualAssessment.') OR ('.$bimbingan.') OR
+        $otherCategory = 'EXISTS (SELECT 1 FROM m_action_category category WHERE '.$categoryMatch.' AND category.is_other IS TRUE)';
+        $requiredScore = 'COALESCE((COALESCE(ma.is_exam,false)=false AND (('.$manualAssessment.') OR ('.$bimbingan.') OR ('.$otherCategory.') OR
             (ma.has_score=true AND ('.$categoryRequired.' OR '.$roleRequired.')))), false)';
         // Unknown/invalid relations are not evidence that assessment is optional.
         // Preserve legacy NULL capability flags when a valid selected relation
@@ -2166,6 +2176,7 @@ public function actionGetTodo()
     }
     Yii::app()->end();
 }
+
 
 
 
@@ -4450,17 +4461,18 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
             if (isset($row['age']) && (!$this->createLogbookInteger($row['age']) || (int)$row['age'] < 0 || (int)$row['age'] > 150)) throw new CHttpException(422, 'Umur EMR tidak valid.');
             if (isset($row['month']) && (!$this->createLogbookInteger($row['month']) || (int)$row['month'] < 0 || (int)$row['month'] > 11)) throw new CHttpException(422, 'Bulan EMR harus 0-11.');
             if (isset($row['gender'])) {
-                $gender = strtolower(trim((string)$row['gender']));
-                // Mobile label is "Male (M)"/"Female (F)"; persist the
-                // canonical legacy code expected by t_logbook_emr.
-                $gender = preg_replace('/\\s*\\([a-z]\\)\\s*$/', '', $gender);
-                if (!in_array($gender, array('male','female','m','f','l','p'), true)) throw new CHttpException(422, 'Gender EMR tidak valid.');
-                $row['gender'] = in_array($gender, array('male','m','l'), true) ? 'M' : 'F';
+                if (!is_string($row['gender'])) throw new CHttpException(422, 'Gender EMR tidak valid.');
+                $gender = strtolower(trim($row['gender']));
+                // Persist the full UI label; accept only known legacy aliases.
+                if (preg_match('/^(?:m|l|male|male\s*\(m\))$/D', $gender)) $row['gender'] = 'Male (M)';
+                elseif (preg_match('/^(?:f|p|female|female\s*\(f\))$/D', $gender)) $row['gender'] = 'Female (F)';
+                else throw new CHttpException(422, 'Gender EMR tidak valid.');
             }
             $data = $this->createLogbookAllowedRow($row, $allowed, array('id_logbook'=>$idLogbook,'id_client'=>$idClient));
             $this->createLogbookInsert($db, 't_logbook_emr', $data);
         }
     }
+
 
     /* REPLACE createLogbookAttachments() with this complete method. Add document validation helpers first. */
 private function createLogbookAttachments($db, $idLogbook, $rows, $idClient)
@@ -5355,12 +5367,14 @@ protected function hachiGenericUploadReply($statusCode, $body)
     private function createLogbookReference($db, $table, $id, $idClient, $idAction, $field)
     {
         if ($id === null) return;
+        if ($table === 'm_action_category') $this->otherCategoryAssertReference($db,$id,$idClient,$idAction);
         $schema = $this->createLogbookAssertColumns($db, $table, array('id','id_client'));
         $where = 'id=:id AND id_client=:client'; $params = array(':id'=>$id, ':client'=>$idClient);
         if (isset($schema->columns['id_action'])) { $where .= ' AND id_action=:action'; $params[':action']=$idAction; }
         if (isset($schema->columns['deleted_at'])) $where .= ' AND deleted_at IS NULL';
         if (!$db->createCommand()->select('id')->from($table)->where($where, $params)->queryRow()) throw new CHttpException(422, $field . ' tidak valid.');
     }
+
 
     private function createLogbookAnotherRole($db, $id, $idClient, $idAction)
     {
@@ -5845,8 +5859,10 @@ protected function hachiGenericUploadReply($statusCode, $body)
             elseif ($type === 'bool') { $data[$field]=$this->updateLogbookBool($payload[$field]); }
             else { $data[$field]=$this->updateLogbookNullableId($payload[$field]); }
         }
+        if (array_key_exists('id_category',$data)) $this->otherCategoryAssertReference($db,$data['id_category'],$idClient,(int)$action['id']);
         return $data;
     }
+
 
     /**
      * Prasi upserts EMR by its trusted parent logbook relation. Mobile must not
@@ -5872,6 +5888,19 @@ protected function hachiGenericUploadReply($statusCode, $body)
             continue;
         }
 
+        if ($field === 'gender' && $rows[0][$field] !== null) {
+            if (!is_string($rows[0][$field])) throw new CHttpException(422, 'Gender EMR tidak valid.');
+            $gender = strtolower(trim($rows[0][$field]));
+            // Preserve existing empty/whitespace semantics; do not invent gender.
+            // Omitted fields (including hidden Morbiditas fields) stay untouched.
+            if ($gender !== '') {
+                if (preg_match('/^(?:m|l|male|male\s*\(m\))$/D', $gender)) $data[$field] = 'Male (M)';
+                elseif (preg_match('/^(?:f|p|female|female\s*\(f\))$/D', $gender)) $data[$field] = 'Female (F)';
+                else throw new CHttpException(422, 'Gender EMR tidak valid.');
+                continue;
+            }
+        }
+
         $data[$field] = $rows[0][$field];
     }
     if (!$data) return;
@@ -5892,6 +5921,7 @@ protected function hachiGenericUploadReply($statusCode, $body)
     if (isset($schema['created_date'])) $data['created_date'] = $now;
     $db->createCommand()->insert('t_logbook_emr', $data);
 }
+
 
 private function updateLogbookEmrNullableInteger($value, $field)
 {
@@ -6718,6 +6748,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
 
     private function logbookStatusReplaceScores($db, $post, $parent)
 {
+    if ($this->otherCategoryReplaceScores($db,$post,$parent)) return;
     $fields = array(
         'score_psikomotor' => 4,
         'score_knowledge' => 5,
@@ -6822,6 +6853,7 @@ private function updateLogbookEmrNullableInteger($value, $field)
         ));
     }
 }
+
 
 
 
@@ -7048,6 +7080,8 @@ private function ensureMorbiditasPointsSession($db, $idUser, $idClient, $idSemes
             return;
         }
 
+        if ($this->createLogbookTruthy($action['allow_other_categories'])) $this->otherCategoryAssertCapability($db,$action,true);
+
         // Role/verifier yang terikat langsung ke action.
         $rolemaps = $db->createCommand('
             SELECT
@@ -7130,7 +7164,7 @@ private function ensureMorbiditasPointsSession($db, $idUser, $idClient, $idSemes
         unset($rolemap);
 
         $categories = $db->createCommand('
-            SELECT id, name, required_asm
+            SELECT id, name, required_asm, is_other
             FROM m_action_category
             WHERE id_action = :id_action
               AND id_client = :id_client
@@ -7241,6 +7275,7 @@ private function ensureMorbiditasPointsSession($db, $idUser, $idClient, $idSemes
 }
 
 
+
 private function logbookMetadataResponse($success, $message, $data = null, $statusCode = 200)
 {
     if (!headers_sent()) {
@@ -7254,6 +7289,145 @@ private function logbookMetadataResponse($success, $message, $data = null, $stat
     ));
     Yii::app()->end();
 }
-    
+
+private function otherCategoryDto($c)
+{
+    $out=array('id'=>(int)$c['id'],'name'=>$c['name'],'is_other'=>$this->createLogbookTruthy($c['is_other']),'required_asm'=>$this->createLogbookTruthy($c['required_asm']));
+    foreach(array('id_action','id_client') as $k) if(isset($c[$k])) $out[$k]=(int)$c[$k];
+    return $out;
+}
+
+private function otherCategoryAssertCapability($db,$action,$adding=false)
+{
+    if (($adding && !$this->createLogbookTruthy(isset($action['allow_other_categories'])?$action['allow_other_categories']:false))
+        || !$this->createLogbookTruthy($action['has_category']) || !$this->createLogbookTruthy($action['has_score']) || $this->createLogbookTruthy($action['is_exam'])) throw new CHttpException(409,'CATEGORY_CAPABILITY_INVALID: Aktivitas tidak mendukung kategori penilaian.');
+    $params=$db->createCommand('SELECT DISTINCT ap.id,ap.min_score,ap.max_score FROM m_asm_action aa INNER JOIN m_asm_param ap ON ap.id=aa.id_asm_param AND ap.id_client=aa.id_client WHERE aa.id_action=:action AND aa.id_client=:client ORDER BY ap.id')->bindValues(array(':action'=>(int)$action['id'],':client'=>(int)$action['id_client']))->queryAll();
+    if (!$params) throw new CHttpException(409,'CATEGORY_CAPABILITY_INVALID: Parameter penilaian aktivitas belum dikonfigurasi.');
+    if ($this->createLogbookTruthy($action['has_score_option']) && !$db->createCommand('SELECT 1 FROM m_score_option WHERE id_action=:action AND id_client=:client AND score IS NOT NULL LIMIT 1')->bindValues(array(':action'=>(int)$action['id'],':client'=>(int)$action['id_client']))->queryScalar()) throw new CHttpException(409,'CATEGORY_CAPABILITY_INVALID: Pilihan skor belum dikonfigurasi.');
+    return $params;
+}
+
+private function otherCategorySimilar($a,$b)
+{
+    // Codepoint edit distance; PHP levenshtein alone is byte-based for Unicode.
+    $x=preg_split('//u',str_replace(' ','',$a),-1,PREG_SPLIT_NO_EMPTY); $y=preg_split('//u',str_replace(' ','',$b),-1,PREG_SPLIT_NO_EMPTY);
+    if (abs(count($x)-count($y))>max(2,(int)floor(max(count($x),count($y))*.2))) return false;
+    $row=range(0,count($y));
+    foreach($x as $i=>$c) { $next=array($i+1); foreach($y as $j=>$d) $next[]=min($next[$j]+1,$row[$j+1]+1,$row[$j]+($c===$d?0:1)); $row=$next; }
+    $distance=$row[count($y)]; $max=max(count($x),count($y));
+    return $distance===0 || ($max>=4 && $distance<=max(1,(int)floor($max*.2)));
+}
+
+private function otherCategoryAssertReference($db,$id,$client,$action)
+{
+    if ($id===null) return;
+    $c=$db->createCommand('SELECT * FROM m_action_category WHERE id=:id AND id_client=:client AND id_action=:action')->bindValues(array(':id'=>$id,':client'=>$client,':action'=>$action))->queryRow();
+    if (!$c) throw new CHttpException(422,'Kategori tidak valid untuk aktivitas/client ini.');
+    if ($this->createLogbookTruthy($c['is_other'])) {
+        if (!$this->createLogbookTruthy($c['required_asm'])) throw new CHttpException(409,'CATEGORY_SCORE_CONFLICT');
+        $a=$db->createCommand('SELECT * FROM m_action WHERE id=:action AND id_client=:client')->bindValues(array(':action'=>$action,':client'=>$client))->queryRow();
+        if (!$a) throw new CHttpException(422,'Aktivitas kategori tidak valid.');
+        $this->otherCategoryAssertCapability($db,$a,false);
+    }
+}
+
+private function otherCategoryReplaceScores($db,$post,$parent)
+{
+    $c=$db->createCommand('SELECT * FROM m_action_category WHERE id=:category AND id_action=:action AND id_client=:client')->bindValues(array(':category'=>$parent['id_category'],':action'=>$parent['id_action'],':client'=>$post['id_client']))->queryRow();
+    if (!$c || !$this->createLogbookTruthy($c['is_other'])) return false;
+    if (!$this->createLogbookTruthy($c['required_asm'])) throw new CHttpException(409,'CATEGORY_SCORE_CONFLICT');
+    $a=$db->createCommand('SELECT * FROM m_action WHERE id=:action AND id_client=:client')->bindValues(array(':action'=>$parent['id_action'],':client'=>$post['id_client']))->queryRow();
+    if (!$a) throw new CHttpException(409,'CATEGORY_CAPABILITY_INVALID');
+    $params=$this->otherCategoryAssertCapability($db,$a,false);
+    $provided=array();
+    if (isset($post['t_logbook_asm'])) {
+        if (!is_array($post['t_logbook_asm'])) throw new CHttpException(422,'Penilaian tidak valid.');
+        foreach($post['t_logbook_asm'] as $row) {
+            if (!is_array($row) || !isset($row['id_asm_param'],$row['score']) || !preg_match('/^[1-9][0-9]*$/D',(string)$row['id_asm_param']) || isset($provided[(int)$row['id_asm_param']])) throw new CHttpException(422,'Parameter penilaian tidak valid/duplikat.');
+            $provided[(int)$row['id_asm_param']]=$row['score'];
+        }
+    } else {
+        // Existing clients' established parameter mapping, unchanged for ordinary categories.
+        foreach(array('score_psikomotor'=>4,'score_knowledge'=>5,'score_affective'=>6) as $f=>$id) if(array_key_exists($f,$post) && $post[$f]!==null && $post[$f]!=='') $provided[$id]=$post[$f];
+    }
+    if (count($provided)!==count($params)) throw new CHttpException(422,'Lengkapi semua skor ASM sebelum verifikasi kategori Lainnya.');
+    foreach($params as $param) {
+        $id=(int)$param['id'];
+        if (!array_key_exists($id,$provided) || is_bool($provided[$id]) || !is_scalar($provided[$id]) || !is_numeric($provided[$id]) || !is_finite((float)$provided[$id])) throw new CHttpException(422,'Lengkapi skor ASM numerik.');
+        $score=(float)$provided[$id];
+        if ($this->createLogbookTruthy($a['has_score_option'])) {
+            if (!$db->createCommand('SELECT 1 FROM m_score_option WHERE id_action=:action AND id_client=:client AND score=:score')->bindValues(array(':action'=>$a['id'],':client'=>$a['id_client'],':score'=>$score))->queryScalar()) throw new CHttpException(422,'Score ASM bukan pilihan yang diizinkan.');
+        } elseif ($score<(float)$param['min_score'] || $score>(float)$param['max_score']) throw new CHttpException(422,'Score ASM di luar batas parameter.');
+    }
+    // Scores belong to the current authorized verifier, not the PPDS or another status.
+    $db->createCommand('DELETE FROM t_logbook_asm WHERE id_logbook=:book AND id_client=:client AND created_date=:actor')->execute(array(':book'=>$parent['id'],':client'=>$post['id_client'],':actor'=>$post['id_user']));
+    foreach($provided as $id=>$score) $db->createCommand('INSERT INTO t_logbook_asm(id_logbook,id_client,id_asm_param,score,created_by,created_date) VALUES(:book,:client,:param,:score,CURRENT_TIMESTAMP,:actor)')->execute(array(':book'=>$parent['id'],':client'=>$post['id_client'],':param'=>$id,':score'=>$score,':actor'=>$post['id_user']));
+    return true;
+}
+
+
+public function actionCreateOtherCategory()
+{
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, Accept');
+    header('Access-Control-Max-Age: 600');
+    header('Content-Type: application/json');
+    if (isset($_SERVER['REQUEST_METHOD']) && strtoupper($_SERVER['REQUEST_METHOD'])==='OPTIONS') { http_response_code(204); Yii::app()->end(); return; }
+    $reply=function($status,$body) { http_response_code($status); echo json_encode($body); Yii::app()->end(); };
+    if (isset($_SERVER['REQUEST_METHOD']) && strtoupper($_SERVER['REQUEST_METHOD'])!=='POST') { $reply(405,array('success'=>false,'message'=>'POST diperlukan.')); return; }
+    $p=json_decode(file_get_contents('php://input'),true);
+    if (!is_array($p)) { $reply(400,array('success'=>false,'message'=>'Payload JSON tidak valid.')); return; }
+    foreach(array('created_by','id_client','id_action') as $f) {
+        if (!isset($p[$f]) || (!is_int($p[$f]) && !is_string($p[$f])) || !preg_match('/^[1-9][0-9]*$/D',(string)$p[$f]) || strlen((string)$p[$f])>10 || (float)$p[$f]>2147483647) { $reply(422,array('success'=>false,'message'=>$f.' tidak valid.')); return; }
+    }
+    if (!isset($p['name']) || !is_string($p['name']) || !preg_match('//u',$p['name']) || preg_match('/[\x00-\x08\x0E-\x1F\x7F]/u',$p['name']) || (array_key_exists('confirm_similar',$p) && !is_bool($p['confirm_similar']))) { $reply(422,array('success'=>false,'message'=>'Nama/konfirmasi tidak valid.')); return; }
+    $tx=null;
+    try {
+        $db=Yii::app()->db;
+        $tx=$db->beginTransaction();
+        $actor=$db->createCommand("SELECT u.id,r.name FROM m_user u INNER JOIN m_role r ON r.id=u.id_role WHERE u.id=:actor AND u.id_client=:client AND u.deleted_at IS NULL AND lower(u.status)='active' FOR SHARE OF u,r")
+            ->bindValues(array(':actor'=>(int)$p['created_by'],':client'=>(int)$p['id_client']))->queryRow();
+        $role=$actor ? preg_replace('/[-_\s]+/',' ',strtolower(trim($actor['name']))) : '';
+        if (!$actor || !in_array($role,array('ppds','staff','staff jejaring','staff pengajar','institution','institusi','institution admin','admin institution','admin institusi'),true)) throw new CHttpException(403,'Actor tidak diizinkan untuk client ini.');
+        // Same connection as current Mobile login/Create; no guessed identity DB.
+        $action=$db->createCommand('SELECT * FROM m_action WHERE id=:action AND id_client=:client FOR SHARE')->bindValues(array(':action'=>(int)$p['id_action'],':client'=>(int)$p['id_client']))->queryRow();
+        if (!$action) throw new CHttpException(404,'Aktivitas tidak ditemukan.');
+        $this->otherCategoryAssertCapability($db,$action,true);
+        $name=$db->createCommand("SELECT btrim(regexp_replace(translate(normalize(CAST(:name AS text),NFKC), U&'\\0085\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000',repeat(' ',19)), '[[:space:]]+', ' ', 'g'))")->bindValue(':name',$p['name'])->queryScalar();
+        $key=$db->createCommand('SELECT public.other_category_key(:name)')->bindValue(':name',$name)->queryScalar();
+        preg_match_all('/./us',$name,$chars);
+        $schema=$db->schema->getTable('m_action_category');
+        $limit=isset($schema->columns['name']->size) && $schema->columns['name']->size>0 ? min(200,(int)$schema->columns['name']->size) : 200;
+        if ($key==='' || count($chars[0])>$limit) throw new CHttpException(422,'Nama wajib diisi, maksimal '.$limit.' karakter.');
+        // Same exact-key lock as migration trigger; confirmation never bypasses it.
+        $db->createCommand("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:client AS text)||':'||CAST(:action AS text)||':'||CAST(:key AS text),0))")->bindValues(array(':client'=>(int)$p['id_client'],':action'=>(int)$p['id_action'],':key'=>$key))->queryScalar();
+        $rows=$db->createCommand('SELECT id,name,id_action,id_client,is_other,required_asm,public.other_category_key(name) normalized_name FROM m_action_category WHERE id_action=:action AND id_client=:client ORDER BY id')->bindValues(array(':action'=>(int)$p['id_action'],':client'=>(int)$p['id_client']))->queryAll();
+        $exact=array(); $similar=array();
+        foreach($rows as $c) {
+            if ($c['normalized_name']===$key) $exact[]=$c;
+            elseif ($this->otherCategorySimilar($key,$c['normalized_name'])) $similar[]=$this->otherCategoryDto($c);
+        }
+        if ($exact) {
+            foreach($exact as $c) if (!$this->createLogbookTruthy($c['required_asm'])) {
+                $tx->rollBack(); $reply(409,array('success'=>false,'code'=>'CATEGORY_SCORE_CONFLICT','message'=>'Kategori dengan nama sama tidak memerlukan penilaian. Pilih kategori lain; data lama tidak diubah.')); return;
+            }
+            $result=$this->otherCategoryDto($exact[0]); $tx->commit(); $reply(200,array('success'=>true,'data'=>$result,'created'=>false)); return;
+        }
+        if ($similar && empty($p['confirm_similar'])) {
+            $tx->rollBack(); $reply(409,array('success'=>false,'code'=>'CATEGORY_SIMILAR','message'=>'Nama mirip sudah tersedia. Pilih yang ada atau konfirmasi kategori berbeda.','data'=>array('candidates'=>$similar))); return;
+        }
+        $db->createCommand("SELECT set_config('logbook.other_category_actor',:actor,true)")->bindValue(':actor',(string)$p['created_by'])->queryScalar();
+        $c=$db->createCommand('INSERT INTO m_action_category(name,id_action,id_client,is_other,required_asm) VALUES(:name,:action,:client,TRUE,TRUE) RETURNING id,name,id_action,id_client,is_other,required_asm')->bindValues(array(':name'=>$name,':action'=>(int)$p['id_action'],':client'=>(int)$p['id_client']))->queryRow();
+        $tx->commit(); $reply(201,array('success'=>true,'data'=>$this->otherCategoryDto($c),'created'=>true));
+    } catch (CHttpException $e) {
+        if ($tx && $tx->active) $tx->rollBack(); $reply($e->statusCode,array('success'=>false,'message'=>$e->getMessage()));
+    } catch (Throwable $e) {
+        if ($tx && $tx->active) $tx->rollBack();
+        Yii::log('OtherCategories create failed type='.get_class($e),CLogger::LEVEL_ERROR,'api.logbook.other');
+        $reply(500,array('success'=>false,'message'=>'Kategori gagal disimpan. Periksa prasyarat OtherCategories; tidak ada data disimpan.'));
+    }
+}
+
     
 }
