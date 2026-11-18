@@ -4405,7 +4405,7 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
         }
     }
 
-    private function createLogbookApplyFlaggedFields($db, &$data, $payload, $action, $idClient, $idAction)
+        private function createLogbookApplyFlaggedFields($db, &$data, $payload, $action, $idClient, $idAction)
     {
         $map = array(
             'has_title' => array('title', 'text'), 'has_location' => array('location', 'text'),
@@ -4426,6 +4426,9 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
                 else $this->createLogbookReference($db, substr($type, 10), $value, $idClient, $idAction, $field);
                 $data[$field] = $value;
             }
+            if ($field === 'operation_code' && ($data[$field] === null || $data[$field] === '')) {
+                $data[$field] = 'LB' . date('Ymdis');
+            }
         }
         if ($this->createLogbookFlag($action, 'is_exam')) $data['exam_result'] = $this->createLogbookText($payload, 'exam_result');
         if ($this->createLogbookFlag($action, 'is_milestone')) $data['is_retake'] = $this->createLogbookBool($payload, 'is_retake', false);
@@ -4434,6 +4437,7 @@ private function createLogbookTarget($db, $payload, $actor, $idClient)
         }
         if ($data['id_stase'] !== null) $this->createLogbookReference($db, 'm_stase', $data['id_stase'], $idClient, $idAction, 'id_stase');
     }
+
 
     private function createLogbookChildren($db, $idLogbook, $payload, $action, $actor, $target, $idClient, $idAction, $now)
     {
