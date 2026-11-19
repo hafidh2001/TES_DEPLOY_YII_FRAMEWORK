@@ -801,7 +801,7 @@ public function actionChangePassword() {
         Yii::app()->end();
     }
 
-    public function actionGetMasterStaff() {
+        public function actionGetMasterStaff() {
         header('Content-Type: application/json');
         $rest_json = file_get_contents("php://input");
         $post = json_decode($rest_json, true);
@@ -815,24 +815,32 @@ public function actionChangePassword() {
             Yii::app()->end();
         }
     
+        $directoryRole = array_key_exists('role', $post) ? $post['role'] : 'staff';
+        if (!is_string($directoryRole) || !in_array($directoryRole, array('staff', 'staff jejaring'), true)
+            || !is_scalar($post['id_client']) || is_bool($post['id_client'])
+            || !preg_match('/^[1-9][0-9]*$/', (string)$post['id_client'])) {
+            echo json_encode(array('success' => false, 'message' => 'Client atau role direktori tidak valid'));
+            Yii::app()->end();
+        }
         try {
             $data = Yii::app()->db->createCommand()
-                ->select('mu.id, mu.display_name')
+                ->select($directoryRole === 'staff jejaring' ? 'mu.id, mu.display_name, mu.id_client, mr.name AS role_name' : 'mu.id, mu.display_name')
                 ->from('m_user mu')
                 ->join('m_role mr', 'mr.id = mu.id_role')
                 ->where('mr.name = :role AND mu.id_client = :id_client AND mu.status = :status AND mu.is_show = true AND mu.deleted_at IS NULL', [
-                    ':role'      => 'staff',
+                    ':role'      => $directoryRole,
                     ':id_client' => $post['id_client'],
                     ':status'    => 'Active',
                 ])
                 ->order('mu.display_name ASC')
                 ->queryAll();
     
-            echo json_encode([
-                'success' => true,
-                'total'   => count($data),
-                'data'    => $data
-            ]);
+            $response = array('success' => true, 'total' => count($data), 'data' => $data);
+            if (isset($post['role'])) {
+                $response['directory_role'] = $directoryRole;
+                $response['id_client'] = (int)$post['id_client'];
+            }
+            echo json_encode($response);
     
         } catch (Exception $e) {
             echo json_encode([
@@ -843,6 +851,7 @@ public function actionChangePassword() {
     
         Yii::app()->end();
     }
+    
     
     public function actionGetMasterSemester() {
         header('Content-Type: application/json');
